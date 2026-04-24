@@ -24,6 +24,8 @@ export default function RootLayout() {
             <Stack.Screen name="admin" />
             <Stack.Screen name="private-trips" options={{ presentation: "modal" }} />
             <Stack.Screen name="birthday-request" options={{ presentation: "modal" }} />
+            <Stack.Screen name="profile-edit" options={{ presentation: "modal" }} />
+            <Stack.Screen name="support" options={{ presentation: "modal" }} />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

@@ -1,19 +1,22 @@
+// Travel'D — Summer Vibrant theme
 export const theme = {
   colors: {
-    bg: "#F9F7F3",
+    bg: "#FBF9F4",
     surface: "#FFFFFF",
-    surfaceMuted: "#F0EAE1",
-    surfaceHighlight: "#FFF0E5",
-    primary: "#E06D53",
-    primaryActive: "#C55B43",
-    secondary: "#2A4B41",
-    secondaryMuted: "#8DA19A",
-    text: "#1A1C19",
-    textMuted: "#737771",
-    success: "#4A7C59",
-    warning: "#F2A65A",
-    border: "#E6E1D6",
-    overlay: "rgba(26, 28, 25, 0.4)",
+    surfaceMuted: "#EAF6FB",
+    surfaceHighlight: "#FFF1E6",
+    primary: "#3BA9DC", // bright sky blue
+    primaryActive: "#2A8EBF",
+    secondary: "#2EC4B6", // turquoise
+    secondaryMuted: "#A6E3DC",
+    accent: "#FF6B5B", // coral
+    sunny: "#FFD56B", // soft yellow
+    text: "#0F2433",
+    textMuted: "#5C7383",
+    success: "#2EC4B6",
+    warning: "#FFA94D",
+    border: "#DCEAF1",
+    overlay: "rgba(15,36,51,0.45)",
     white: "#FFFFFF",
   },
   radius: { sm: 12, md: 16, lg: 24, pill: 9999 },

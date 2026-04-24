@@ -28,6 +28,26 @@ export default function Profile() {
         ) : null}
       </View>
       <View style={{ paddingHorizontal: 24, marginTop: 16, gap: 12 }}>
+        <TouchableOpacity
+          testID="edit-profile-btn"
+          onPress={() => router.push("/profile-edit")}
+          style={s.row}
+        >
+          <Feather name="edit-2" size={18} color={theme.colors.secondary} />
+          <Text style={s.rowText}>Edit profile</Text>
+          <View style={{ flex: 1 }} />
+          <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="help-support-btn"
+          onPress={() => router.push("/support")}
+          style={s.row}
+        >
+          <Feather name="help-circle" size={18} color={theme.colors.secondary} />
+          <Text style={s.rowText}>Help &amp; Support</Text>
+          <View style={{ flex: 1 }} />
+          <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+        </TouchableOpacity>
         {(user as any)?.role === "admin" ? (
           <TouchableOpacity
             testID="open-admin-dashboard"

@@ -17,7 +17,7 @@ import { api, formatApiError } from "../../src/api";
 import { scheduleCheckInReminder } from "../../src/notifications";
 import { theme } from "../../src/theme";
 
-type T = "flight" | "train" | "bus" | "ferry" | "car";
+type T = "flight" | "train" | "bus" | "ferry" | "car" | "shuttle" | "rideshare" | "other";
 
 const TYPES: { id: T; label: string; icon: string }[] = [
   { id: "flight", label: "Flight", icon: "send" },
@@ -25,6 +25,9 @@ const TYPES: { id: T; label: string; icon: string }[] = [
   { id: "bus", label: "Bus", icon: "truck" },
   { id: "ferry", label: "Ferry", icon: "anchor" },
   { id: "car", label: "Car Rental", icon: "navigation" },
+  { id: "shuttle", label: "Shuttle", icon: "users" },
+  { id: "rideshare", label: "Rideshare", icon: "smartphone" },
+  { id: "other", label: "Other", icon: "more-horizontal" },
 ];
 
 export default function AddTransport() {

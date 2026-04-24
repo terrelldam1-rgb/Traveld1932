@@ -111,6 +111,8 @@ def public_user(u: dict) -> dict:
         "name": u.get("name", ""),
         "avatar_url": u.get("avatar_url"),
         "role": u.get("role", "user"),
+        "phone": u.get("phone"),
+        "emergency_contact": u.get("emergency_contact"),
     }
 
 
@@ -138,14 +140,18 @@ class TripCreate(BaseModel):
     end_date: str
     cover_url: Optional[str] = None
     pool_goal: float = 0.0
-    solo_price: float = 0.0  # advertised price if traveling alone
-    category_goals: dict = Field(default_factory=dict)  # {flight: 500, hotel: 300...}
+    solo_price: float = 0.0  # advertised price if traveling alone (also "pay full" amount)
+    category_goals: dict = Field(default_factory=dict)
     description: Optional[str] = None
     is_public: bool = False
     tags: List[str] = Field(default_factory=list)
     max_members: int = 15
     itinerary: List[dict] = Field(default_factory=list)
     guided: bool = False
+    status: Literal["draft", "published", "archived"] = "published"
+    featured: bool = False
+    lodging: Optional[str] = None  # hotel / lodging details
+    pay_full_enabled: bool = True  # allow members to pay full price upfront
 
 
 class TripUpdate(BaseModel):
@@ -163,11 +169,32 @@ class TripUpdate(BaseModel):
     max_members: Optional[int] = None
     itinerary: Optional[List[dict]] = None
     guided: Optional[bool] = None
+    status: Optional[Literal["draft", "published", "archived"]] = None
+    featured: Optional[bool] = None
+    lodging: Optional[str] = None
+    pay_full_enabled: Optional[bool] = None
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    avatar_url: Optional[str] = None
+    emergency_contact: Optional[str] = None
+
+
+class CheckoutFullReq(BaseModel):
+    trip_id: str
+    origin_url: str
+
+
+class SupportReq(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=2000)
 
 
 class FlightCreate(BaseModel):
     trip_id: Optional[str] = None
-    transport_type: Literal["flight", "train", "bus", "ferry", "car"] = "flight"
+    transport_type: Literal["flight", "train", "bus", "ferry", "car", "shuttle", "rideshare", "other"] = "flight"
     # Generic fields used by all types (relabeled in UI):
     airline: str  # operator / airline / rental company
     flight_number: str  # flight # / train # / bus # / ferry # / reservation #
@@ -248,6 +275,97 @@ async def login(body: LoginReq):
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return public_user(user)
+
+
+@api.patch("/auth/me")
+async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user)):
+    updates = {k: v for k, v in body.dict().items() if v is not None}
+    if updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    refreshed = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {
+        **public_user(refreshed),
+        "phone": refreshed.get("phone"),
+        "emergency_contact": refreshed.get("emergency_contact"),
+    }
+
+
+@api.post("/trips/{trip_id}/regenerate-code")
+async def regenerate_invite_code(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(trip_id, user["id"])
+    if trip["host_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only host or admin can regenerate")
+    new_code = gen_invite_code()
+    while await db.trips.find_one({"invite_code": new_code}):
+        new_code = gen_invite_code()
+    await db.trips.update_one({"id": trip_id}, {"$set": {"invite_code": new_code}})
+    return {"invite_code": new_code}
+
+
+@api.post("/payments/checkout-full")
+async def create_full_checkout(body: CheckoutFullReq, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(body.trip_id, user["id"])
+    if not trip.get("pay_full_enabled", True):
+        raise HTTPException(status_code=400, detail="Full payment not enabled for this trip")
+    amount = float(trip.get("solo_price") or trip.get("pool_goal") or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="No price set for this trip")
+    origin = body.origin_url.rstrip("/")
+    success_url = f"{origin}/payment-return?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/payment-return?canceled=1"
+    metadata = {
+        "trip_id": body.trip_id,
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "category": "full",
+        "package_id": "full_price",
+    }
+    stripe_client = _stripe(origin)
+    req = CheckoutSessionRequest(
+        amount=amount,
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+    )
+    session: CheckoutSessionResponse = await stripe_client.create_checkout_session(req)
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "trip_id": body.trip_id,
+        "category": "full",
+        "package_id": "full_price",
+        "amount": amount,
+        "currency": "usd",
+        "payment_status": "pending",
+        "status": "initiated",
+        "metadata": metadata,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"url": session.url, "session_id": session.session_id, "amount": amount}
+
+
+@api.post("/inbox/support")
+async def submit_support(body: SupportReq, user: dict = Depends(get_current_user)):
+    req = {
+        "id": str(uuid.uuid4()),
+        "type": "support",
+        "from_user_id": user["id"],
+        "from_name": user.get("name"),
+        "from_email": user["email"],
+        "subject": body.subject.strip(),
+        "message": body.message.strip(),
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_requests.insert_one(req)
+    req.pop("_id", None)
+    return req
+
+
 
 
 # ============ Trips ============
@@ -348,6 +466,10 @@ async def create_trip(body: TripCreate, user: dict = Depends(get_current_user)):
         "max_members": max_m,
         "itinerary": body.itinerary or [],
         "guided": body.guided,
+        "status": body.status,
+        "featured": body.featured if user.get("role") == "admin" else False,
+        "lodging": body.lodging,
+        "pay_full_enabled": body.pay_full_enabled,
         "members": [{
             "user_id": user["id"],
             "role": "host",
@@ -373,11 +495,13 @@ async def list_trips(user: dict = Depends(get_current_user)):
 @api.get("/trips/public")
 async def list_public_trips(tag: Optional[str] = None):
     """Public catalog of admin-curated trips. No auth required (discovery)."""
-    q: dict = {"is_public": True}
+    q: dict = {"is_public": True, "status": {"$ne": "archived"}}
     if tag:
         q["tags"] = tag
-    cursor = db.trips.find(q, {"_id": 0}).sort("start_date", 1)
+    cursor = db.trips.find(q, {"_id": 0}).sort([("featured", -1), ("start_date", 1)])
     trips = await cursor.to_list(500)
+    # filter out drafts unless owned (this endpoint is unauthenticated, drop drafts)
+    trips = [t for t in trips if t.get("status", "published") != "draft"]
     return [await _enrich_trip(t) for t in trips]
 
 

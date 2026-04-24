@@ -2,15 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api, formatApiError, origin } from "../../src/api";
 import { theme } from "../../src/theme";
@@ -33,7 +25,6 @@ export default function Contribute() {
   const [cat, setCat] = useState<string>("general");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-
   useEffect(() => {
     api.get("/payments/packages").then(({ data }) => {
       setPackages(data);
@@ -132,9 +123,34 @@ export default function Contribute() {
           {busy ? <ActivityIndicator color="#fff" /> : (
             <>
               <Feather name="lock" size={16} color="#fff" />
-              <Text style={s.primaryText}>Pay securely with Stripe</Text>
+              <Text style={s.primaryText}>Pay tier with Stripe</Text>
             </>
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          testID="pay-full-btn"
+          style={s.secondary}
+          onPress={async () => {
+            try {
+              setBusy(true);
+              const { data } = await api.post("/payments/checkout-full", {
+                trip_id: tripId,
+                origin_url: origin,
+              });
+              const WB = await import("expo-web-browser");
+              await WB.openBrowserAsync(data.url, { dismissButtonStyle: "close" });
+              await pollStatus(data.session_id);
+            } catch (e) {
+              setErr(formatApiError(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={busy}
+        >
+          <Feather name="credit-card" size={16} color={theme.colors.primary} />
+          <Text style={s.secondaryText}>Pay full trip price</Text>
         </TouchableOpacity>
         <Text style={s.note}>Test mode. Use Stripe test card 4242 4242 4242 4242.</Text>
       </ScrollView>
@@ -159,5 +175,7 @@ const s = StyleSheet.create({
   err: { color: "#B03A2E", fontSize: 13 },
   primary: { backgroundColor: theme.colors.primary, paddingVertical: 16, borderRadius: 9999, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 8, marginTop: 8 },
   primaryText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  secondary: { paddingVertical: 16, borderRadius: 9999, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 8, marginTop: 10, borderWidth: 2, borderColor: theme.colors.primary, backgroundColor: "#fff" },
+  secondaryText: { color: theme.colors.primary, fontWeight: "700", fontSize: 15 },
   note: { fontSize: 12, color: theme.colors.textMuted, textAlign: "center" },
 });
