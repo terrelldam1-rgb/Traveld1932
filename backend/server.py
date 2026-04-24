@@ -168,19 +168,23 @@ class TripUpdate(BaseModel):
 class FlightCreate(BaseModel):
     trip_id: Optional[str] = None
     transport_type: Literal["flight", "train", "bus", "ferry", "car"] = "flight"
-    airline: str  # carrier / operator name
-    flight_number: str  # flight or train number
-    departure_airport: str  # station / airport code
-    arrival_airport: str
-    departure_time: str
-    arrival_time: str
+    # Generic fields used by all types (relabeled in UI):
+    airline: str  # operator / airline / rental company
+    flight_number: str  # flight # / train # / bus # / ferry # / reservation #
+    departure_airport: str  # origin airport / station / port / pickup location
+    arrival_airport: str  # destination / return location (car)
+    departure_time: str  # ISO datetime — departure / pickup
+    arrival_time: str  # arrival / return
     confirmation_number: Optional[str] = None
     booking_reference: Optional[str] = None
+    notes: Optional[str] = None
+    # Type-specific extras (free-form)
+    extras: dict = Field(default_factory=dict)
+    # Deprecated top-level — kept only for older clients
     terminal: Optional[str] = None
     gate: Optional[str] = None
     seat: Optional[str] = None
     checkin_url: Optional[str] = None
-    notes: Optional[str] = None
 
 
 class MessageCreate(BaseModel):

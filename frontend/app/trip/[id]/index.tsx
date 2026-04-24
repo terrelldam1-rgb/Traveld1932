@@ -152,19 +152,21 @@ export default function TripDetail() {
         </SafeAreaView>
       </ImageBackground>
 
-      <View style={s.segment}>
-        {(["pool", "flights", "chat", "ideas", "members"] as const).map((t) => (
-          <TouchableOpacity
-            key={t}
-            onPress={() => setTab(t)}
-            style={[s.segmentItem, tab === t && s.segmentActive]}
-          >
-            <Text style={[s.segmentText, tab === t && s.segmentTextActive]}>
-              {t === "flights" ? "TRNSPRT" : t.toUpperCase()}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 4 }} style={{ marginBottom: 16 }}>
+        <View style={s.segment}>
+          {(["pool", "flights", "chat", "ideas", "members"] as const).map((t) => (
+            <TouchableOpacity
+              key={t}
+              onPress={() => setTab(t)}
+              style={[s.segmentItem, tab === t && s.segmentActive]}
+            >
+              <Text style={[s.segmentText, tab === t && s.segmentTextActive]}>
+                {t === "flights" ? "TRANSPORT" : t.toUpperCase()}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
 
       <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 160, gap: 16 }}>
         {tab === "pool" && (
@@ -439,8 +441,8 @@ const s = StyleSheet.create({
   heroDest: { color: "rgba(255,255,255,0.9)", fontSize: 12, fontWeight: "800", letterSpacing: 1.5, textTransform: "uppercase" },
   heroName: { color: "#fff", fontSize: 30, fontWeight: "800", letterSpacing: -0.8, marginTop: 6 },
   heroDates: { color: "rgba(255,255,255,0.9)", fontSize: 13, marginTop: 4 },
-  segment: { flexDirection: "row", backgroundColor: theme.colors.surfaceMuted, margin: 20, borderRadius: 9999, padding: 4 },
-  segmentItem: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 9999 },
+  segment: { flexDirection: "row", backgroundColor: theme.colors.surfaceMuted, borderRadius: 9999, padding: 4 },
+  segmentItem: { paddingVertical: 10, paddingHorizontal: 18, alignItems: "center", borderRadius: 9999 },
   segmentActive: { backgroundColor: "#fff" },
   segmentText: { fontSize: 11, fontWeight: "800", color: theme.colors.textMuted, letterSpacing: 1.2 },
   segmentTextActive: { color: theme.colors.text },
