@@ -1,11 +1,12 @@
-# TripHost — Group Travel Planner
+# Travel'D — Group Travel Planner
 
 ## Overview
-A mobile-first Expo app for hosting group trips. Hosts create trips, invite friends via 6-char codes / share links, and collect contributions to a shared pool via Stripe. Each traveler stores flight info and gets a 24h check-in reminder.
+A mobile-first Expo app (rebranded from TripHost → **Travel'D**) for hosting group trips. Hosts create trips, advertise a **solo price** alongside the auto-split **per-person share**, invite friends via 6-char code / share links, and collect contributions via Stripe. Each traveler stores flight info and gets a 24h check-in reminder.
 
 ## Core Features (MVP complete)
 - **Auth:** JWT custom auth (register/login/me) with bcrypt; token stored via expo-secure-store on native, localStorage on web.
-- **Trips:** Create (name, destination, date range, cover photo, pool goal, category goals), list, detail (Pool / Flights / Members segmented tabs), update, delete, leave, join by invite code.
+- **Trips:** Create (name, destination, date range, cover photo, **solo price**, pool goal, category goals), list, detail (Pool / Flights / Members segmented tabs), update, delete, leave, join by invite code.
+- **Solo vs Share pricing:** Host enters a "solo price" (what one traveler would pay alone). Backend auto-computes `share_per_person = pool_goal / members` and `solo_savings = solo_price − share`. Shown prominently in the Pool tab as a solo-vs-share card. Each member row shows contributed / share / remaining with a "paid in full" check.
 - **Invite / Share:** 6-char alphanumeric code, native Share sheet, deep link `/trip/join?code=XXXXXX`.
 - **Pool (Stripe Checkout):** Fixed tiers ($25/$50/$100/$250/$500) × 5 categories (flight/hotel/transportation/activities/general). Opens Stripe Checkout in WebBrowser, polls status endpoint, updates pool totals and per-member contributed amounts. Webhook endpoint `/api/webhook/stripe`.
 - **Flights:** Add (airline, flight#, airports, ISO datetimes, PNR), list per user, delete. Schedules an expo-notifications local alert **24h before departure** on native devices.

@@ -17,13 +17,13 @@ export default function Welcome() {
         <View style={s.topRow}>
           <View style={s.badge}>
             <Feather name="compass" size={14} color={theme.colors.primary} />
-            <Text style={s.badgeText}>TRIPHOST</Text>
+            <Text style={s.badgeText}>TRAVEL&apos;D</Text>
           </View>
         </View>
         <View style={s.bottom}>
           <Text style={s.headline}>Travel together,{"\n"}effortlessly.</Text>
           <Text style={s.sub}>
-            Host trips, split the pool, track flights — bring everyone along for the ride.
+            Travel&apos;D — host trips, split the pool, track flights. Bring everyone along for the ride.
           </Text>
           <TouchableOpacity
             testID="get-started-btn"

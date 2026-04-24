@@ -27,6 +27,7 @@ export default function CreateTrip() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [poolGoal, setPoolGoal] = useState("");
+  const [soloPrice, setSoloPrice] = useState("");
   const [catGoals, setCatGoals] = useState<Record<string, string>>({});
   const [cover, setCover] = useState(COVER_OPTIONS[0].url);
   const [err, setErr] = useState("");
@@ -52,6 +53,7 @@ export default function CreateTrip() {
         end_date: end.trim(),
         cover_url: cover,
         pool_goal: Number(poolGoal) || 0,
+        solo_price: Number(soloPrice) || 0,
         category_goals: catGoalsNum,
       });
       router.replace(`/trip/${data.id}`);
@@ -130,7 +132,18 @@ export default function CreateTrip() {
             )}
           />
 
-          <Text style={s.label}>Overall pool goal (USD)</Text>
+          <Text style={s.label}>Solo price (what 1 traveler would pay alone)</Text>
+          <TextInput
+            testID="solo-price"
+            placeholder="800"
+            value={soloPrice}
+            onChangeText={setSoloPrice}
+            keyboardType="numeric"
+            style={s.input}
+            placeholderTextColor={theme.colors.textMuted}
+          />
+
+          <Text style={s.label}>Total group pool goal (USD)</Text>
           <TextInput
             testID="pool-goal"
             placeholder="2000"

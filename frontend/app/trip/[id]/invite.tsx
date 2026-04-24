@@ -35,7 +35,7 @@ export default function Invite() {
   const share = async () => {
     try {
       await Share.share({
-        message: `Join my trip "${trip?.name}" on TripHost. Use invite code ${code} or open: ${link}`,
+        message: `Join my trip "${trip?.name}" on Travel'D. Use invite code ${code} or open: ${link}`,
       });
     } catch {}
   };

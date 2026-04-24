@@ -22,7 +22,7 @@ export default function Profile() {
       <View style={{ paddingHorizontal: 24, marginTop: 16, gap: 12 }}>
         <Row icon="bell" label="Notifications enabled" />
         <Row icon="shield" label="Your data is encrypted" />
-        <Row icon="globe" label="Powered by TripHost" />
+        <Row icon="globe" label="Powered by Travel'D" />
       </View>
       <View style={{ flex: 1 }} />
       <View style={{ padding: 24, paddingBottom: 140 }}>

@@ -114,6 +114,23 @@ export default function TripDetail() {
       <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 160, gap: 16 }}>
         {tab === "pool" && (
           <>
+            {trip.solo_price > 0 ? (
+              <View style={s.soloCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.soloLabel}>TRAVELING ALONE</Text>
+                  <Text style={s.soloStrike}>${trip.solo_price.toFixed(0)}</Text>
+                </View>
+                <Feather name="arrow-right" size={20} color="#fff" />
+                <View style={{ flex: 1, alignItems: "flex-end" }}>
+                  <Text style={s.soloLabel}>YOUR SHARE</Text>
+                  <Text style={s.soloShare}>${trip.share_per_person.toFixed(0)}</Text>
+                  {trip.solo_savings > 0 ? (
+                    <Text style={s.soloSave}>Save ${trip.solo_savings.toFixed(0)}</Text>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
+
             <View style={s.poolCard}>
               <Text style={s.poolLabel}>TOTAL RAISED</Text>
               <Text style={s.poolAmount}>${trip.total_raised.toFixed(2)}</Text>
@@ -122,10 +139,35 @@ export default function TripDetail() {
                   <View style={s.progressBg}>
                     <View style={[s.progressFill, { width: `${progress * 100}%` }]} />
                   </View>
-                  <Text style={s.poolGoal}>Goal ${trip.pool_goal.toFixed(0)}</Text>
+                  <Text style={s.poolGoal}>Goal ${trip.pool_goal.toFixed(0)} · {trip.members_detail.length} travelers</Text>
                 </>
               ) : null}
             </View>
+
+            {trip.share_per_person > 0 ? (() => {
+              const myMember = trip.members_detail.find((m: any) => m.id === user?.id);
+              const myContrib = myMember?.contributed || 0;
+              const myRemaining = myMember?.remaining || 0;
+              const myProgress = trip.share_per_person > 0 ? Math.min(1, myContrib / trip.share_per_person) : 0;
+              return (
+                <View style={s.myShareCard}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={s.myShareLabel}>YOUR PROGRESS</Text>
+                    <Text style={s.myShareAmt}>
+                      ${myContrib.toFixed(0)} / ${trip.share_per_person.toFixed(0)}
+                    </Text>
+                  </View>
+                  <View style={[s.catBar, { marginTop: 12 }]}>
+                    <View style={[s.catBarFill, { width: `${myProgress * 100}%` }]} />
+                  </View>
+                  <Text style={s.myShareRemaining}>
+                    {myRemaining > 0
+                      ? `$${myRemaining.toFixed(0)} remaining to cover your share`
+                      : "You're fully paid for this trip "}
+                  </Text>
+                </View>
+              );
+            })() : null}
 
             {CATEGORIES.map((c) => {
               const raised = trip.category_raised?.[c.id] || 0;
@@ -209,12 +251,29 @@ export default function TripDetail() {
                   <Text style={s.memberInitial}>{(m.name?.[0] || "?").toUpperCase()}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.memberName}>
-                    {m.name} {m.role === "host" ? "· Host" : ""}
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={s.memberName}>{m.name}</Text>
+                    {m.role === "host" ? (
+                      <View style={s.hostTag}>
+                        <Text style={s.hostTagText}>HOST</Text>
+                      </View>
+                    ) : null}
+                    {m.paid_in_full ? (
+                      <Feather name="check-circle" size={14} color={theme.colors.success} />
+                    ) : null}
+                  </View>
+                  <Text style={s.muted}>
+                    {m.share > 0
+                      ? `$${m.contributed.toFixed(0)} of $${m.share.toFixed(0)} share`
+                      : `$${m.contributed.toFixed(0)} contributed`}
                   </Text>
-                  <Text style={s.muted}>{m.email}</Text>
                 </View>
-                <Text style={s.memberAmt}>${m.contributed.toFixed(0)}</Text>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={s.memberAmt}>${m.contributed.toFixed(0)}</Text>
+                  {m.share > 0 && m.remaining > 0 ? (
+                    <Text style={s.memberRemaining}>-${m.remaining.toFixed(0)}</Text>
+                  ) : null}
+                </View>
               </View>
             ))}
             {isHost ? (
@@ -278,4 +337,16 @@ const s = StyleSheet.create({
   memberInitial: { color: "#fff", fontWeight: "800", fontSize: 16 },
   memberName: { fontSize: 14, fontWeight: "700", color: theme.colors.text },
   memberAmt: { fontSize: 14, fontWeight: "800", color: theme.colors.secondary },
+  memberRemaining: { fontSize: 11, color: theme.colors.primary, fontWeight: "700", marginTop: 2 },
+  hostTag: { backgroundColor: theme.colors.surfaceHighlight, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 9999 },
+  hostTagText: { fontSize: 9, fontWeight: "800", letterSpacing: 1, color: theme.colors.primary },
+  soloCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.colors.primary, borderRadius: 24, padding: 20 },
+  soloLabel: { color: "rgba(255,255,255,0.8)", fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  soloStrike: { color: "rgba(255,255,255,0.7)", fontSize: 22, fontWeight: "800", textDecorationLine: "line-through", marginTop: 2 },
+  soloShare: { color: "#fff", fontSize: 28, fontWeight: "800", letterSpacing: -0.5, marginTop: 2 },
+  soloSave: { color: "#FFE0B2", fontSize: 11, fontWeight: "700", marginTop: 2 },
+  myShareCard: { backgroundColor: theme.colors.surfaceHighlight, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: theme.colors.primary },
+  myShareLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 1.2, color: theme.colors.primary },
+  myShareAmt: { fontSize: 16, fontWeight: "800", color: theme.colors.text },
+  myShareRemaining: { fontSize: 12, color: theme.colors.secondary, marginTop: 10, fontWeight: "600" },
 });

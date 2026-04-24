@@ -131,6 +131,7 @@ class TripCreate(BaseModel):
     end_date: str
     cover_url: Optional[str] = None
     pool_goal: float = 0.0
+    solo_price: float = 0.0  # advertised price if traveling alone
     category_goals: dict = Field(default_factory=dict)  # {flight: 500, hotel: 300...}
     description: Optional[str] = None
 
@@ -142,6 +143,7 @@ class TripUpdate(BaseModel):
     end_date: Optional[str] = None
     cover_url: Optional[str] = None
     pool_goal: Optional[float] = None
+    solo_price: Optional[float] = None
     category_goals: Optional[dict] = None
     description: Optional[str] = None
 
@@ -244,6 +246,26 @@ async def _enrich_trip(trip: dict) -> dict:
     trip["members_detail"] = enriched_members
     trip["total_raised"] = round(total_raised, 2)
     trip["category_raised"] = {k: round(v, 2) for k, v in by_category.items()}
+
+    # Per-person share: prefer solo_price if set (group discount concept),
+    # else pool_goal / members count.
+    member_count = max(1, len(enriched_members))
+    solo = float(trip.get("solo_price") or 0.0)
+    goal = float(trip.get("pool_goal") or 0.0)
+    if goal > 0:
+        share = round(goal / member_count, 2)
+    elif solo > 0:
+        share = round(solo, 2)
+    else:
+        share = 0.0
+    trip["share_per_person"] = share
+    trip["solo_savings"] = round(max(0.0, solo - share), 2) if solo > 0 else 0.0
+
+    # Enrich each member with their individual share & remaining owed
+    for m in enriched_members:
+        m["share"] = share
+        m["remaining"] = round(max(0.0, share - m["contributed"]), 2)
+        m["paid_in_full"] = share > 0 and m["contributed"] >= share
     return trip
 
 
@@ -263,6 +285,7 @@ async def create_trip(body: TripCreate, user: dict = Depends(get_current_user)):
         "cover_url": body.cover_url,
         "description": body.description,
         "pool_goal": body.pool_goal,
+        "solo_price": body.solo_price,
         "category_goals": body.category_goals or {},
         "host_id": user["id"],
         "invite_code": invite_code,
