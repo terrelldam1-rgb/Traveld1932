@@ -1,0 +1,45 @@
+{
+  "summary": "Tested TripHost Expo RN app end-to-end. Backend: 18/19 pytest tests pass (1 real issue: /api/payments/status/{id} returns 500 when Stripe session not immediately retrievable via emergentintegrations). Frontend: welcome, register, home, create-trip, trip detail with Pool/Flights/Members tabs, invite modal (6-char code), copy/share buttons, contribute modal with tier/category/pay selectors all render and function. Checkout session is successfully created (backend POST /api/payments/checkout returns 200 with url+session_id).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/payments/status/{session_id}", "issue": "Returns 500 Internal Server Error when Stripe (via emergentintegrations) raises CheckoutError 'No such checkout.session' for a session that was just created. No try/except around stripe_client.get_checkout_status(). Frontend polls this endpoint so it repeatedly 500s. Also, response shape is inconsistent between short-circuit path (returns raw txn amount in dollars) and live path (returns res.amount_total/100). Wrap in try/except and map to 4xx with useful detail, and consider a small retry/backoff for eventual consistency.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/trips/join", "issue": "body is typed as plain dict instead of a Pydantic model; accepts arbitrary JSON."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "trip/[id]/index.tsx Flights segment 'Add your flight' button", "issue": "Uses testID 'trip-add-flight-btn' but review spec expected 'add-flight-btn'. The root (tabs)/flights.tsx header already has 'add-flight-btn'. Consider renaming the in-trip one to 'add-flight-btn' (or aliasing) so the flow `Trip detail -> Flights tab -> Add Flight` can be driven with the documented testID.", "testID": "trip-add-flight-btn (should be add-flight-btn)", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Contribute / Stripe", "issue": "Checkout session is created successfully (POST /api/payments/checkout -> 200). However, the contribute screen calls WebBrowser.openBrowserAsync(url) then immediately polls /payments/status/{id} which currently 500s (see backend issue). On web, openBrowserAsync opens a new tab and returns instantly so the polling loop runs against a failing endpoint; after 8 polls (~20s) it alerts 'Pending' and calls router.back(). Review explicitly allows not completing Stripe — this wiring is correct; only the status 500 needs fixing.", "affected_testIDs": ["pay-btn"]}
+    ],
+    "design_issues": [
+      {"screen": "welcome", "issues": ["'I already have an account' ghost button has no clear tap surface styling (transparent); touch target is fine though."]},
+      {"screen": "global", "issues": ["Console warnings: 'shadow*' style props deprecated (use boxShadow), props.pointerEvents deprecated, and '[Layout children]: No route named \"trip/[id]\" exists in nested children' warning due to the (tabs)/trips Href typing. Cosmetic only."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_triphost.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Wrap stripe_client.get_checkout_status() in try/except inside checkout_status endpoint; return 202 {payment_status: 'pending'} on transient 'No such checkout.session' so frontend polling doesn't break.",
+    "Normalize the /payments/status response shape (always return amount in dollars).",
+    "Optionally rename testID on trip-detail flights-segment add button from 'trip-add-flight-btn' to 'add-flight-btn' to match the documented testID map.",
+    "Silence/fix the expo-router warning: 'No route named trip/[id] exists in nested children' (the route is now trip/[id]/index but something references trip/[id])."
+  ],
+  "critical_code_review_comments": [
+    "server.py payments/status path divides res.amount_total by 100 but the short-circuit path returns txn['amount'] already in dollars — inconsistent.",
+    "JWT_SECRET is committed in backend/.env (acceptable for this preview environment but should be rotated before production).",
+    "CORS allow_origins=['*'] with allow_credentials=True is invalid per CORS spec (browsers ignore credentials in this case). Fine for token-in-header auth used here, but note it.",
+    "server.py is ~530 lines; still OK but approaching the 700-line split threshold.",
+    "trips/join body is untyped dict; switch to Pydantic model for consistency."
+  ],
+  "updated_files": ["/app/backend/tests/test_triphost.py"],
+  "success_rate": {"backend": "94.7% (18/19)", "frontend": "~90% (all core flows verified on mobile viewport 390x844)"},
+  "seed_data_creation": "Tests create TEST_ prefixed users and trips dynamically per run; no persistent seed data added. Trip created in cleanup is deleted.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend public URL: https://trip-host.preview.emergentagent.com (from EXPO_PUBLIC_BACKEND_URL). Run: `pytest /app/backend/tests/test_triphost.py -v`. Demo credentials in /app/memory/test_credentials.md. Auth is JWT Bearer (no cookies). Known issue: /api/payments/status/{id} returns 500 due to emergentintegrations Stripe CheckoutError not being caught.",
+  "rca_of_issue": "Payment status 500: emergentintegrations.payments.stripe.checkout.get_checkout_status raises CheckoutError('No such checkout.session: cs_test_...') for a just-created session (Stripe test-key/emergent routing eventual consistency). server.py:463 doesn't catch this; FastAPI bubbles to 500. Fix: try/except CheckoutError -> return {'payment_status': 'pending', 'status': 'initiated', 'amount': txn['amount']} or 202."
+}

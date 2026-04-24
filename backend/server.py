@@ -1,59 +1,523 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
-import uuid
-from datetime import datetime
-
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+import os
+import uuid
+import logging
+import secrets
+import string
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Literal
+
+import bcrypt
+import jwt
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
+
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout,
+    CheckoutSessionResponse,
+    CheckoutStatusResponse,
+    CheckoutSessionRequest,
+)
+
+# MongoDB
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+# App
+app = FastAPI(title="TripHost API")
+api = APIRouter(prefix="/api")
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_ALG = "HS256"
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
+
+security = HTTPBearer(auto_error=False)
+
+# Fixed contribution packages (in USD) - price manipulation protection
+CONTRIBUTION_PACKAGES = {
+    "tier_25": 25.00,
+    "tier_50": 50.00,
+    "tier_100": 100.00,
+    "tier_250": 250.00,
+    "tier_500": 500.00,
+}
+
+CATEGORIES = {"flight", "hotel", "transportation", "activities"}
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+# ============ Helpers ============
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
+def verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "type": "access",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
-# Include the router in the main app
-app.include_router(api_router)
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> dict:
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def gen_invite_code(length: int = 6) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def public_user(u: dict) -> dict:
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "name": u.get("name", ""),
+        "avatar_url": u.get("avatar_url"),
+    }
+
+
+# ============ Models ============
+class RegisterReq(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str = Field(min_length=1, max_length=80)
+
+
+class LoginReq(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class AuthResp(BaseModel):
+    token: str
+    user: dict
+
+
+class TripCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    destination: str = Field(min_length=1, max_length=120)
+    start_date: str  # ISO date
+    end_date: str
+    cover_url: Optional[str] = None
+    pool_goal: float = 0.0
+    category_goals: dict = Field(default_factory=dict)  # {flight: 500, hotel: 300...}
+    description: Optional[str] = None
+
+
+class TripUpdate(BaseModel):
+    name: Optional[str] = None
+    destination: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    cover_url: Optional[str] = None
+    pool_goal: Optional[float] = None
+    category_goals: Optional[dict] = None
+    description: Optional[str] = None
+
+
+class FlightCreate(BaseModel):
+    trip_id: Optional[str] = None
+    airline: str
+    flight_number: str
+    departure_airport: str
+    arrival_airport: str
+    departure_time: str  # ISO datetime
+    arrival_time: str
+    confirmation_number: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class CheckoutReq(BaseModel):
+    trip_id: str
+    package_id: str
+    category: Literal["flight", "hotel", "transportation", "activities", "general"]
+    origin_url: str
+
+
+# ============ Auth Endpoints ============
+@api.post("/auth/register", response_model=AuthResp)
+async def register(body: RegisterReq):
+    email = body.email.lower().strip()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user_id = str(uuid.uuid4())
+    doc = {
+        "id": user_id,
+        "email": email,
+        "name": body.name.strip(),
+        "password_hash": hash_password(body.password),
+        "avatar_url": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(doc)
+    token = create_access_token(user_id, email)
+    return {"token": token, "user": public_user(doc)}
+
+
+@api.post("/auth/login", response_model=AuthResp)
+async def login(body: LoginReq):
+    email = body.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user["id"], email)
+    return {"token": token, "user": public_user(user)}
+
+
+@api.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return public_user(user)
+
+
+# ============ Trips ============
+async def _trip_for_user(trip_id: str, user_id: str) -> dict:
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    member_ids = [m["user_id"] for m in trip.get("members", [])]
+    if user_id not in member_ids and trip["host_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not a member of this trip")
+    return trip
+
+
+async def _enrich_trip(trip: dict) -> dict:
+    # Add member user data and contribution totals
+    member_ids = [m["user_id"] for m in trip.get("members", [])]
+    users = await db.users.find({"id": {"$in": member_ids}}, {"_id": 0, "password_hash": 0}).to_list(200)
+    users_map = {u["id"]: public_user(u) for u in users}
+
+    # Sum successful contributions by category and by user
+    txns = await db.payment_transactions.find(
+        {"trip_id": trip["id"], "payment_status": "paid"}, {"_id": 0}
+    ).to_list(1000)
+    total_raised = sum(t["amount"] for t in txns)
+    by_category = {}
+    by_user = {}
+    for t in txns:
+        by_category[t["category"]] = by_category.get(t["category"], 0.0) + t["amount"]
+        by_user[t["user_id"]] = by_user.get(t["user_id"], 0.0) + t["amount"]
+
+    enriched_members = []
+    for m in trip.get("members", []):
+        u = users_map.get(m["user_id"])
+        if not u:
+            continue
+        enriched_members.append({
+            **u,
+            "role": m.get("role", "member"),
+            "joined_at": m.get("joined_at"),
+            "contributed": round(by_user.get(m["user_id"], 0.0), 2),
+        })
+
+    trip["members_detail"] = enriched_members
+    trip["total_raised"] = round(total_raised, 2)
+    trip["category_raised"] = {k: round(v, 2) for k, v in by_category.items()}
+    return trip
+
+
+@api.post("/trips")
+async def create_trip(body: TripCreate, user: dict = Depends(get_current_user)):
+    trip_id = str(uuid.uuid4())
+    invite_code = gen_invite_code()
+    while await db.trips.find_one({"invite_code": invite_code}):
+        invite_code = gen_invite_code()
+
+    doc = {
+        "id": trip_id,
+        "name": body.name,
+        "destination": body.destination,
+        "start_date": body.start_date,
+        "end_date": body.end_date,
+        "cover_url": body.cover_url,
+        "description": body.description,
+        "pool_goal": body.pool_goal,
+        "category_goals": body.category_goals or {},
+        "host_id": user["id"],
+        "invite_code": invite_code,
+        "members": [{
+            "user_id": user["id"],
+            "role": "host",
+            "joined_at": datetime.now(timezone.utc).isoformat(),
+        }],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trips.insert_one(doc)
+    doc.pop("_id", None)
+    return await _enrich_trip(doc)
+
+
+@api.get("/trips")
+async def list_trips(user: dict = Depends(get_current_user)):
+    cursor = db.trips.find(
+        {"members.user_id": user["id"]},
+        {"_id": 0},
+    ).sort("start_date", 1)
+    trips = await cursor.to_list(200)
+    return [await _enrich_trip(t) for t in trips]
+
+
+@api.get("/trips/{trip_id}")
+async def get_trip(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(trip_id, user["id"])
+    return await _enrich_trip(trip)
+
+
+@api.patch("/trips/{trip_id}")
+async def update_trip(trip_id: str, body: TripUpdate, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(trip_id, user["id"])
+    if trip["host_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Only host can update")
+    updates = {k: v for k, v in body.dict().items() if v is not None}
+    if updates:
+        await db.trips.update_one({"id": trip_id}, {"$set": updates})
+    updated = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    return await _enrich_trip(updated)
+
+
+@api.delete("/trips/{trip_id}")
+async def delete_trip(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(trip_id, user["id"])
+    if trip["host_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Only host can delete")
+    await db.trips.delete_one({"id": trip_id})
+    await db.flights.delete_many({"trip_id": trip_id})
+    return {"ok": True}
+
+
+@api.post("/trips/join")
+async def join_trip(body: dict, user: dict = Depends(get_current_user)):
+    code = (body.get("invite_code") or "").upper().strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="invite_code required")
+    trip = await db.trips.find_one({"invite_code": code}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Invalid invite code")
+    member_ids = [m["user_id"] for m in trip.get("members", [])]
+    if user["id"] in member_ids:
+        return await _enrich_trip(trip)
+    new_member = {
+        "user_id": user["id"],
+        "role": "member",
+        "joined_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trips.update_one({"id": trip["id"]}, {"$push": {"members": new_member}})
+    trip["members"].append(new_member)
+    return await _enrich_trip(trip)
+
+
+@api.post("/trips/{trip_id}/leave")
+async def leave_trip(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(trip_id, user["id"])
+    if trip["host_id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="Host cannot leave; delete the trip instead")
+    await db.trips.update_one(
+        {"id": trip_id},
+        {"$pull": {"members": {"user_id": user["id"]}}},
+    )
+    return {"ok": True}
+
+
+# ============ Flights ============
+@api.post("/flights")
+async def add_flight(body: FlightCreate, user: dict = Depends(get_current_user)):
+    if body.trip_id:
+        await _trip_for_user(body.trip_id, user["id"])
+    fid = str(uuid.uuid4())
+    doc = body.dict()
+    doc.update({
+        "id": fid,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await db.flights.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/flights")
+async def list_flights(
+    trip_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    q = {"user_id": user["id"]}
+    if trip_id:
+        q["trip_id"] = trip_id
+    flights = await db.flights.find(q, {"_id": 0}).sort("departure_time", 1).to_list(200)
+    return flights
+
+
+@api.delete("/flights/{flight_id}")
+async def delete_flight(flight_id: str, user: dict = Depends(get_current_user)):
+    res = await db.flights.delete_one({"id": flight_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Flight not found")
+    return {"ok": True}
+
+
+# ============ Payments (Stripe Checkout) ============
+def _stripe(origin_url: str) -> StripeCheckout:
+    webhook_url = f"{origin_url.rstrip('/')}/api/webhook/stripe"
+    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+
+@api.get("/payments/packages")
+async def list_packages():
+    return [{"id": pid, "amount": amt} for pid, amt in CONTRIBUTION_PACKAGES.items()]
+
+
+@api.post("/payments/checkout")
+async def create_checkout(body: CheckoutReq, user: dict = Depends(get_current_user)):
+    if body.package_id not in CONTRIBUTION_PACKAGES:
+        raise HTTPException(status_code=400, detail="Invalid package")
+    await _trip_for_user(body.trip_id, user["id"])
+
+    amount = float(CONTRIBUTION_PACKAGES[body.package_id])
+    origin = body.origin_url.rstrip("/")
+    success_url = f"{origin}/payment-return?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/payment-return?canceled=1"
+
+    metadata = {
+        "trip_id": body.trip_id,
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "category": body.category,
+        "package_id": body.package_id,
+    }
+
+    stripe_client = _stripe(origin)
+    req = CheckoutSessionRequest(
+        amount=amount,
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+    )
+    session: CheckoutSessionResponse = await stripe_client.create_checkout_session(req)
+
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "trip_id": body.trip_id,
+        "category": body.category,
+        "package_id": body.package_id,
+        "amount": amount,
+        "currency": "usd",
+        "payment_status": "pending",
+        "status": "initiated",
+        "metadata": metadata,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"url": session.url, "session_id": session.session_id, "amount": amount}
+
+
+@api.get("/payments/status/{session_id}")
+async def checkout_status(session_id: str, request: Request, user: dict = Depends(get_current_user)):
+    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if txn["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your transaction")
+
+    # If already paid, short-circuit
+    if txn["payment_status"] == "paid":
+        return {"payment_status": "paid", "status": txn["status"], "amount": txn["amount"]}
+
+    origin = str(request.base_url).rstrip("/")
+    stripe_client = _stripe(origin)
+    res: CheckoutStatusResponse = await stripe_client.get_checkout_status(session_id)
+
+    # Idempotent update
+    new_fields = {
+        "payment_status": res.payment_status,
+        "status": res.status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.update_one(
+        {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+        {"$set": new_fields},
+    )
+    return {"payment_status": res.payment_status, "status": res.status, "amount": res.amount_total / 100.0}
+
+
+@app.post("/api/webhook/stripe")
+async def stripe_webhook(request: Request):
+    origin = str(request.base_url).rstrip("/")
+    stripe_client = _stripe(origin)
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    try:
+        evt = await stripe_client.handle_webhook(body, sig)
+    except Exception as e:
+        logging.exception("Webhook error")
+        raise HTTPException(status_code=400, detail=str(e))
+    await db.payment_transactions.update_one(
+        {"session_id": evt.session_id, "payment_status": {"$ne": "paid"}},
+        {"$set": {
+            "payment_status": evt.payment_status,
+            "status": "completed" if evt.payment_status == "paid" else evt.payment_status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    return {"received": True}
+
+
+# ============ Startup ============
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.trips.create_index("id", unique=True)
+    await db.trips.create_index("invite_code", unique=True)
+    await db.trips.create_index("members.user_id")
+    await db.flights.create_index("id", unique=True)
+    await db.flights.create_index([("user_id", 1), ("departure_time", 1)])
+    await db.payment_transactions.create_index("session_id", unique=True)
+    await db.payment_transactions.create_index("trip_id")
+    logging.info("Indexes ready")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    client.close()
+
+
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,13 +527,4 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
