@@ -22,6 +22,8 @@ export default function RootLayout() {
             <Stack.Screen name="contribute/[tripId]" options={{ presentation: "modal" }} />
             <Stack.Screen name="payment-return" />
             <Stack.Screen name="admin" />
+            <Stack.Screen name="private-trips" options={{ presentation: "modal" }} />
+            <Stack.Screen name="birthday-request" options={{ presentation: "modal" }} />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

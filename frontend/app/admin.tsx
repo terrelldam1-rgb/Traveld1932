@@ -27,10 +27,11 @@ type Stats = {
 export default function AdminDashboard() {
   const router = useRouter();
   const { user } = useAuth();
-  const [tab, setTab] = useState<"overview" | "trips" | "users">("overview");
+  const [tab, setTab] = useState<"overview" | "trips" | "users" | "inbox">("overview");
   const [stats, setStats] = useState<Stats | null>(null);
   const [trips, setTrips] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [inbox, setInbox] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -87,7 +88,7 @@ export default function AdminDashboard() {
       </View>
 
       <View style={s.segment}>
-        {(["overview", "trips", "users"] as const).map((t) => (
+        {(["overview", "trips", "users", "inbox"] as const).map((t) => (
           <TouchableOpacity
             key={t}
             onPress={() => setTab(t)}
@@ -95,7 +96,9 @@ export default function AdminDashboard() {
             testID={`admin-tab-${t}`}
           >
             <Text style={[s.segmentText, tab === t && s.segmentTextActive]}>
-              {t.toUpperCase()}
+              {t === "inbox" && inbox.filter((r) => r.status === "open").length > 0
+                ? `INBOX (${inbox.filter((r) => r.status === "open").length})`
+                : t.toUpperCase()}
             </Text>
           </TouchableOpacity>
         ))}
@@ -192,6 +195,25 @@ export default function AdminDashboard() {
           ListEmptyComponent={!loading ? <Text style={s.muted}>No users yet.</Text> : null}
         />
       )}
+
+      {tab === "inbox" && (
+        <FlatList
+          data={inbox}
+          keyExtractor={(r) => r.id}
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.colors.primary} />}
+          contentContainerStyle={{ padding: 20, paddingBottom: 160, gap: 12 }}
+          renderItem={({ item }) => <InboxCard item={item} onResolve={async () => {
+            await api.patch(`/admin/inbox/${item.id}`, { status: item.status === "open" ? "answered" : "open" });
+            load();
+          }} />}
+          ListEmptyComponent={!loading ? (
+            <View style={{ padding: 40, alignItems: "center", gap: 8 }}>
+              <Feather name="inbox" size={36} color={theme.colors.textMuted} />
+              <Text style={{ color: theme.colors.textMuted }}>No requests yet.</Text>
+            </View>
+          ) : null}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -204,6 +226,56 @@ function StatCard({ icon, value, label }: { icon: any; value: number; label: str
       </View>
       <Text style={s.statValue}>{value}</Text>
       <Text style={s.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function InboxCard({ item, onResolve }: { item: any; onResolve: () => void }) {
+  const isBirthday = item.type === "birthday";
+  const isOpen = item.status === "open";
+  return (
+    <View style={[s.row, { flexDirection: "column", alignItems: "stretch", gap: 8 }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Feather name={isBirthday ? "gift" : "key"} size={16} color={theme.colors.primary} />
+        <Text style={s.rowTitle}>
+          {isBirthday ? "Birthday Trip Request" : "Private Code Request"}
+        </Text>
+        <View style={{ flex: 1 }} />
+        <View style={[s.statusTag, { backgroundColor: isOpen ? theme.colors.primary : theme.colors.success }]}>
+          <Text style={s.statusText}>{item.status.toUpperCase()}</Text>
+        </View>
+      </View>
+      <Text style={s.muted}>
+        From {item.from_name} ({item.from_email}) ·{" "}
+        {new Date(item.created_at).toLocaleDateString()}
+      </Text>
+      {isBirthday ? (
+        <View style={{ gap: 4, marginTop: 4 }}>
+          <Text style={{ color: theme.colors.text, fontSize: 13 }}>
+            <Text style={{ fontWeight: "700" }}>{item.person_name}</Text> · {item.birthday_date}
+          </Text>
+          <Text style={{ color: theme.colors.text, fontSize: 13 }}>
+            {item.vibe} · {item.group_size} people{item.budget ? ` · ~$${item.budget}/pp` : ""}
+          </Text>
+          {item.destination_ideas ? (
+            <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
+              Ideas: {item.destination_ideas}
+            </Text>
+          ) : null}
+          {item.notes ? (
+            <Text style={{ color: theme.colors.textMuted, fontSize: 13, fontStyle: "italic" }}>
+              “{item.notes}”
+            </Text>
+          ) : null}
+        </View>
+      ) : item.message ? (
+        <Text style={{ color: theme.colors.text, fontSize: 13, fontStyle: "italic" }}>“{item.message}”</Text>
+      ) : null}
+      <TouchableOpacity onPress={onResolve} style={s.resolveBtn}>
+        <Text style={s.resolveText}>
+          {isOpen ? "Mark as answered" : "Re-open"}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -236,5 +308,9 @@ const s = StyleSheet.create({
   avaText: { color: "#fff", fontWeight: "800" },
   adminTag: { backgroundColor: theme.colors.primary, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 9999 },
   adminTagText: { fontSize: 9, fontWeight: "800", color: "#fff", letterSpacing: 1 },
+  statusTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 9999 },
+  statusText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  resolveBtn: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 14, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight, marginTop: 4 },
+  resolveText: { color: theme.colors.primary, fontWeight: "700", fontSize: 12 },
   err: { color: "#B03A2E", paddingHorizontal: 20 },
 });

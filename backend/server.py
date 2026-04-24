@@ -93,6 +93,12 @@ async def get_current_user(
     return user
 
 
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
 def gen_invite_code(length: int = 6) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
@@ -135,6 +141,11 @@ class TripCreate(BaseModel):
     solo_price: float = 0.0  # advertised price if traveling alone
     category_goals: dict = Field(default_factory=dict)  # {flight: 500, hotel: 300...}
     description: Optional[str] = None
+    is_public: bool = False
+    tags: List[str] = Field(default_factory=list)
+    max_members: int = 15
+    itinerary: List[dict] = Field(default_factory=list)
+    guided: bool = False
 
 
 class TripUpdate(BaseModel):
@@ -147,6 +158,11 @@ class TripUpdate(BaseModel):
     solo_price: Optional[float] = None
     category_goals: Optional[dict] = None
     description: Optional[str] = None
+    is_public: Optional[bool] = None
+    tags: Optional[List[str]] = None
+    max_members: Optional[int] = None
+    itinerary: Optional[List[dict]] = None
+    guided: Optional[bool] = None
 
 
 class FlightCreate(BaseModel):
@@ -282,6 +298,13 @@ async def _enrich_trip(trip: dict) -> dict:
 
 @api.post("/trips")
 async def create_trip(body: TripCreate, user: dict = Depends(get_current_user)):
+    # Only admins can publish public trips
+    if body.is_public and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can publish public trips")
+    # Only admins can apply category tags (to keep public categories curated)
+    if body.tags and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can tag trips")
+    max_m = max(1, min(15, body.max_members or 15))
     trip_id = str(uuid.uuid4())
     invite_code = gen_invite_code()
     while await db.trips.find_one({"invite_code": invite_code}):
@@ -300,6 +323,11 @@ async def create_trip(body: TripCreate, user: dict = Depends(get_current_user)):
         "category_goals": body.category_goals or {},
         "host_id": user["id"],
         "invite_code": invite_code,
+        "is_public": body.is_public,
+        "tags": body.tags or [],
+        "max_members": max_m,
+        "itinerary": body.itinerary or [],
+        "guided": body.guided,
         "members": [{
             "user_id": user["id"],
             "role": "host",
@@ -319,6 +347,17 @@ async def list_trips(user: dict = Depends(get_current_user)):
         {"_id": 0},
     ).sort("start_date", 1)
     trips = await cursor.to_list(200)
+    return [await _enrich_trip(t) for t in trips]
+
+
+@api.get("/trips/public")
+async def list_public_trips(tag: Optional[str] = None):
+    """Public catalog of admin-curated trips. No auth required (discovery)."""
+    q: dict = {"is_public": True}
+    if tag:
+        q["tags"] = tag
+    cursor = db.trips.find(q, {"_id": 0}).sort("start_date", 1)
+    trips = await cursor.to_list(500)
     return [await _enrich_trip(t) for t in trips]
 
 
@@ -361,12 +400,42 @@ async def join_trip(body: dict, user: dict = Depends(get_current_user)):
     member_ids = [m["user_id"] for m in trip.get("members", [])]
     if user["id"] in member_ids:
         return await _enrich_trip(trip)
+    max_m = trip.get("max_members", 15)
+    if len(member_ids) >= max_m:
+        raise HTTPException(status_code=400, detail=f"Trip is full (max {max_m} travelers)")
     new_member = {
         "user_id": user["id"],
         "role": "member",
         "joined_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.trips.update_one({"id": trip["id"]}, {"$push": {"members": new_member}})
+    trip["members"].append(new_member)
+    return await _enrich_trip(trip)
+
+
+@api.get("/trips/public")
+async def list_public_trips_legacy(tag: Optional[str] = None):
+    # kept for route registration uniqueness check; the version above is the source of truth.
+    return await list_public_trips(tag)
+
+
+@api.post("/trips/{trip_id}/join-public")
+async def join_public_trip(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip or not trip.get("is_public"):
+        raise HTTPException(status_code=404, detail="Public trip not found")
+    member_ids = [m["user_id"] for m in trip.get("members", [])]
+    if user["id"] in member_ids:
+        return await _enrich_trip(trip)
+    max_m = trip.get("max_members", 15)
+    if len(member_ids) >= max_m:
+        raise HTTPException(status_code=400, detail=f"Trip is full (max {max_m} travelers)")
+    new_member = {
+        "user_id": user["id"],
+        "role": "member",
+        "joined_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trips.update_one({"id": trip_id}, {"$push": {"members": new_member}})
     trip["members"].append(new_member)
     return await _enrich_trip(trip)
 
@@ -537,6 +606,91 @@ async def stripe_webhook(request: Request):
     return {"received": True}
 
 
+# ============ Inbox (Admin Requests) ============
+class CodeRequestReq(BaseModel):
+    message: Optional[str] = None  # optional note to admin
+
+
+class BirthdayRequestReq(BaseModel):
+    person_name: str = Field(min_length=1, max_length=120)
+    birthday_date: str  # ISO date
+    destination_ideas: Optional[str] = None
+    group_size: int = Field(default=1, ge=1, le=50)
+    vibe: Optional[str] = None  # solo / family / friends
+    budget: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@api.post("/inbox/request-code")
+async def request_private_code(body: CodeRequestReq, user: dict = Depends(get_current_user)):
+    req = {
+        "id": str(uuid.uuid4()),
+        "type": "code_request",
+        "from_user_id": user["id"],
+        "from_name": user.get("name"),
+        "from_email": user["email"],
+        "message": (body.message or "").strip() or None,
+        "status": "open",  # open / answered / closed
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_requests.insert_one(req)
+    req.pop("_id", None)
+    return req
+
+
+@api.post("/inbox/birthday-request")
+async def request_birthday_trip(body: BirthdayRequestReq, user: dict = Depends(get_current_user)):
+    req = {
+        "id": str(uuid.uuid4()),
+        "type": "birthday",
+        "from_user_id": user["id"],
+        "from_name": user.get("name"),
+        "from_email": user["email"],
+        "person_name": body.person_name,
+        "birthday_date": body.birthday_date,
+        "destination_ideas": body.destination_ideas,
+        "group_size": body.group_size,
+        "vibe": body.vibe,
+        "budget": body.budget,
+        "notes": body.notes,
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_requests.insert_one(req)
+    req.pop("_id", None)
+    return req
+
+
+@api.get("/admin/inbox")
+async def admin_inbox(
+    status_filter: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if status_filter:
+        q["status"] = status_filter
+    reqs = await db.admin_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return reqs
+
+
+@api.patch("/admin/inbox/{request_id}")
+async def admin_update_inbox_item(
+    request_id: str,
+    body: dict,
+    _: dict = Depends(require_admin),
+):
+    new_status = body.get("status")
+    if new_status not in {"open", "answered", "closed"}:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    res = await db.admin_requests.update_one(
+        {"id": request_id},
+        {"$set": {"status": new_status, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
+
 # ============ Startup ============
 @app.on_event("startup")
 async def startup():
@@ -549,6 +703,10 @@ async def startup():
     await db.flights.create_index([("user_id", 1), ("departure_time", 1)])
     await db.payment_transactions.create_index("session_id", unique=True)
     await db.payment_transactions.create_index("trip_id")
+    await db.admin_requests.create_index("id", unique=True)
+    await db.admin_requests.create_index([("status", 1), ("created_at", -1)])
+    await db.admin_requests.create_index("id", unique=True)
+    await db.admin_requests.create_index([("status", 1), ("created_at", -1)])
 
     # Seed founder (Super Admin) — password set on first login
     founder_email = os.environ.get("FOUNDER_EMAIL", "").lower().strip()
@@ -570,12 +728,6 @@ async def startup():
             await db.users.update_one({"email": founder_email}, {"$set": {"role": "admin"}})
 
     logging.info("Indexes ready")
-
-
-async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    return user
 
 
 @api.get("/admin/trips")

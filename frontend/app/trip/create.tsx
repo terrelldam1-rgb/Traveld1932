@@ -52,9 +52,14 @@ export default function CreateTrip() {
         start_date: start.trim(),
         end_date: end.trim(),
         cover_url: cover,
+        description: description.trim() || null,
         pool_goal: Number(poolGoal) || 0,
         solo_price: Number(soloPrice) || 0,
         category_goals: catGoalsNum,
+        is_public: isAdmin ? isPublic : false,
+        tags: isAdmin ? tags : [],
+        max_members: Math.max(1, Math.min(15, parseInt(maxMembers) || 15)),
+        guided: isAdmin ? guided : false,
       });
       router.replace(`/trip/${data.id}`);
     } catch (e) {
@@ -198,4 +203,12 @@ const s = StyleSheet.create({
   err: { color: "#B03A2E", fontSize: 13, marginTop: 8 },
   primary: { backgroundColor: theme.colors.primary, paddingVertical: 16, borderRadius: 9999, alignItems: "center", marginTop: 20 },
   primaryText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  adminBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: theme.colors.surfaceHighlight, borderRadius: 9999, alignSelf: "flex-start" },
+  adminBannerText: { fontSize: 11, fontWeight: "800", letterSpacing: 1, color: theme.colors.primary },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border, marginTop: 8 },
+  toggleLabel: { fontSize: 14, fontWeight: "700", color: theme.colors.text },
+  toggleSub: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
+  tagChip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 9999, backgroundColor: "#fff", borderWidth: 1, borderColor: theme.colors.border },
+  tagChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  tagChipText: { fontSize: 12, fontWeight: "700", color: theme.colors.secondary },
 });
