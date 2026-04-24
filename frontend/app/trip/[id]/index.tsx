@@ -1,13 +1,17 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ImageBackground,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -29,18 +33,26 @@ export default function TripDetail() {
   const { user } = useAuth();
   const [trip, setTrip] = useState<any>(null);
   const [flights, setFlights] = useState<any[]>([]);
-  const [tab, setTab] = useState<"pool" | "flights" | "members">("pool");
+  const [messages, setMessages] = useState<any[]>([]);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [draftMsg, setDraftMsg] = useState("");
+  const [draftSug, setDraftSug] = useState("");
+  const [tab, setTab] = useState<"pool" | "flights" | "chat" | "ideas" | "members">("pool");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [t, f] = await Promise.all([
+      const [t, f, m, sug] = await Promise.all([
         api.get(`/trips/${id}`),
         api.get(`/flights`, { params: { trip_id: id } }),
+        api.get(`/trips/${id}/messages`),
+        api.get(`/trips/${id}/suggestions`),
       ]);
       setTrip(t.data);
       setFlights(f.data);
+      setMessages(m.data);
+      setSuggestions(sug.data);
       setErr("");
     } catch (e) {
       setErr(formatApiError(e));
@@ -48,6 +60,49 @@ export default function TripDetail() {
       setLoading(false);
     }
   }, [id]);
+
+  // poll chat when chat tab is active
+  useEffect(() => {
+    if (tab !== "chat") return;
+    const t = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/trips/${id}/messages`);
+        setMessages(data);
+      } catch {}
+    }, 4000);
+    return () => clearInterval(t);
+  }, [tab, id]);
+
+  const sendMessage = async () => {
+    const text = draftMsg.trim();
+    if (!text) return;
+    setDraftMsg("");
+    try {
+      const { data } = await api.post(`/trips/${id}/messages`, { text });
+      setMessages((prev) => [...prev, data]);
+    } catch (e) {
+      Alert.alert("Error", formatApiError(e));
+    }
+  };
+
+  const addSuggestion = async () => {
+    const title = draftSug.trim();
+    if (!title) return;
+    setDraftSug("");
+    try {
+      const { data } = await api.post(`/trips/${id}/suggestions`, { title });
+      setSuggestions((prev) => [data, ...prev]);
+    } catch (e) {
+      Alert.alert("Error", formatApiError(e));
+    }
+  };
+
+  const toggleLike = async (sid: string) => {
+    try {
+      const { data } = await api.post(`/trips/${id}/suggestions/${sid}/like`);
+      setSuggestions((prev) => prev.map((s) => (s.id === sid ? { ...s, ...data } : s)));
+    } catch {}
+  };
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -98,14 +153,14 @@ export default function TripDetail() {
       </ImageBackground>
 
       <View style={s.segment}>
-        {(["pool", "flights", "members"] as const).map((t) => (
+        {(["pool", "flights", "chat", "ideas", "members"] as const).map((t) => (
           <TouchableOpacity
             key={t}
             onPress={() => setTab(t)}
             style={[s.segmentItem, tab === t && s.segmentActive]}
           >
             <Text style={[s.segmentText, tab === t && s.segmentTextActive]}>
-              {t.toUpperCase()}
+              {t === "flights" ? "TRNSPRT" : t.toUpperCase()}
             </Text>
           </TouchableOpacity>
         ))}
@@ -237,6 +292,86 @@ export default function TripDetail() {
           </>
         )}
 
+        {tab === "chat" && (
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, minHeight: 400 }}>
+            {messages.length === 0 ? (
+              <View style={{ alignItems: "center", padding: 20, gap: 6 }}>
+                <Feather name="message-circle" size={36} color={theme.colors.textMuted} />
+                <Text style={{ color: theme.colors.textMuted }}>No messages yet. Say hi to your crew!</Text>
+              </View>
+            ) : (
+              messages.map((m: any) => {
+                const mine = m.user_id === user?.id;
+                return (
+                  <View key={m.id} style={[s.msgRow, mine && { justifyContent: "flex-end" }]}>
+                    <View style={[s.msgBubble, mine ? s.msgMine : s.msgTheirs]}>
+                      {!mine ? <Text style={s.msgAuthor}>{m.user_name}</Text> : null}
+                      <Text style={[s.msgText, mine && { color: "#fff" }]}>{m.text}</Text>
+                      <Text style={[s.msgTime, mine && { color: "rgba(255,255,255,0.7)" }]}>
+                        {new Date(m.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+            <View style={s.chatInputRow}>
+              <TextInput
+                value={draftMsg}
+                onChangeText={setDraftMsg}
+                placeholder="Message the crew..."
+                placeholderTextColor={theme.colors.textMuted}
+                style={s.chatInput}
+                testID="chat-input"
+              />
+              <TouchableOpacity onPress={sendMessage} style={s.sendBtn} testID="chat-send">
+                <Feather name="send" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        )}
+
+        {tab === "ideas" && (
+          <>
+            <View style={s.chatInputRow}>
+              <TextInput
+                value={draftSug}
+                onChangeText={setDraftSug}
+                placeholder="Any must-sees? Drop a spot, restaurant, vibe..."
+                placeholderTextColor={theme.colors.textMuted}
+                style={s.chatInput}
+                testID="sug-input"
+              />
+              <TouchableOpacity onPress={addSuggestion} style={s.sendBtn} testID="sug-send">
+                <Feather name="plus" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {suggestions.length === 0 ? (
+              <View style={{ alignItems: "center", padding: 20, gap: 6 }}>
+                <Feather name="map-pin" size={36} color={theme.colors.textMuted} />
+                <Text style={{ color: theme.colors.textMuted }}>No ideas yet. Be the first!</Text>
+              </View>
+            ) : (
+              suggestions.map((sg: any) => (
+                <View key={sg.id} style={s.sugCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.sugTitle}>{sg.title}</Text>
+                    <Text style={s.muted}>— {sg.user_name}</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => toggleLike(sg.id)}
+                    style={[s.likeBtn, sg.liked_by_me && { backgroundColor: theme.colors.primary }]}
+                    testID={`sug-like-${sg.id}`}
+                  >
+                    <Feather name="heart" size={14} color={sg.liked_by_me ? "#fff" : theme.colors.primary} />
+                    <Text style={[s.likeText, sg.liked_by_me && { color: "#fff" }]}>{sg.like_count}</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </>
+        )}
+
         {tab === "members" && (
           <>
             <View style={s.membersHeader}>
@@ -349,4 +484,18 @@ const s = StyleSheet.create({
   myShareLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 1.2, color: theme.colors.primary },
   myShareAmt: { fontSize: 16, fontWeight: "800", color: theme.colors.text },
   myShareRemaining: { fontSize: 12, color: theme.colors.secondary, marginTop: 10, fontWeight: "600" },
+  msgRow: { flexDirection: "row", marginBottom: 8 },
+  msgBubble: { maxWidth: "78%", padding: 12, borderRadius: 18 },
+  msgMine: { backgroundColor: theme.colors.primary, borderBottomRightRadius: 4 },
+  msgTheirs: { backgroundColor: "#fff", borderWidth: 1, borderColor: theme.colors.border, borderBottomLeftRadius: 4 },
+  msgAuthor: { fontSize: 11, fontWeight: "800", color: theme.colors.primary, marginBottom: 2 },
+  msgText: { fontSize: 14, color: theme.colors.text, lineHeight: 19 },
+  msgTime: { fontSize: 10, color: theme.colors.textMuted, marginTop: 4, textAlign: "right" },
+  chatInputRow: { flexDirection: "row", gap: 8, marginTop: 8, marginBottom: 12 },
+  chatInput: { flex: 1, backgroundColor: "#fff", borderRadius: 9999, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 18, paddingVertical: 12, fontSize: 14, color: theme.colors.text },
+  sendBtn: { width: 44, height: 44, borderRadius: 9999, backgroundColor: theme.colors.primary, alignItems: "center", justifyContent: "center" },
+  sugCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8 },
+  sugTitle: { fontSize: 15, fontWeight: "700", color: theme.colors.text },
+  likeBtn: { flexDirection: "row", gap: 4, alignItems: "center", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight },
+  likeText: { fontSize: 12, fontWeight: "700", color: theme.colors.primary },
 });

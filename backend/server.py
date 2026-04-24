@@ -167,14 +167,30 @@ class TripUpdate(BaseModel):
 
 class FlightCreate(BaseModel):
     trip_id: Optional[str] = None
-    airline: str
-    flight_number: str
-    departure_airport: str
+    transport_type: Literal["flight", "train", "bus", "ferry", "car"] = "flight"
+    airline: str  # carrier / operator name
+    flight_number: str  # flight or train number
+    departure_airport: str  # station / airport code
     arrival_airport: str
-    departure_time: str  # ISO datetime
+    departure_time: str
     arrival_time: str
     confirmation_number: Optional[str] = None
+    booking_reference: Optional[str] = None
+    terminal: Optional[str] = None
+    gate: Optional[str] = None
+    seat: Optional[str] = None
+    checkin_url: Optional[str] = None
     notes: Optional[str] = None
+
+
+class MessageCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class SuggestionCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    note: Optional[str] = None
+    category: Optional[str] = None  # must_see / food / nightlife / etc
 
 
 class CheckoutReq(BaseModel):
@@ -606,6 +622,82 @@ async def stripe_webhook(request: Request):
     return {"received": True}
 
 
+# ============ Trip Chat & Suggestions ============
+@api.post("/trips/{trip_id}/messages")
+async def post_message(trip_id: str, body: MessageCreate, user: dict = Depends(get_current_user)):
+    await _trip_for_user(trip_id, user["id"])
+    msg = {
+        "id": str(uuid.uuid4()),
+        "trip_id": trip_id,
+        "user_id": user["id"],
+        "user_name": user.get("name"),
+        "text": body.text.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trip_messages.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
+
+@api.get("/trips/{trip_id}/messages")
+async def list_messages(trip_id: str, user: dict = Depends(get_current_user)):
+    await _trip_for_user(trip_id, user["id"])
+    cursor = db.trip_messages.find({"trip_id": trip_id}, {"_id": 0}).sort("created_at", 1)
+    return await cursor.to_list(500)
+
+
+@api.post("/trips/{trip_id}/suggestions")
+async def add_suggestion(trip_id: str, body: SuggestionCreate, user: dict = Depends(get_current_user)):
+    await _trip_for_user(trip_id, user["id"])
+    sug = {
+        "id": str(uuid.uuid4()),
+        "trip_id": trip_id,
+        "user_id": user["id"],
+        "user_name": user.get("name"),
+        "title": body.title.strip(),
+        "note": (body.note or "").strip() or None,
+        "category": body.category,
+        "likes": [user["id"]],  # author auto-likes
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trip_suggestions.insert_one(sug)
+    sug.pop("_id", None)
+    sug["like_count"] = len(sug["likes"])
+    sug["liked_by_me"] = True
+    return sug
+
+
+@api.get("/trips/{trip_id}/suggestions")
+async def list_suggestions(trip_id: str, user: dict = Depends(get_current_user)):
+    await _trip_for_user(trip_id, user["id"])
+    cursor = db.trip_suggestions.find({"trip_id": trip_id}, {"_id": 0}).sort("created_at", -1)
+    items = await cursor.to_list(500)
+    for s in items:
+        likes = s.get("likes", [])
+        s["like_count"] = len(likes)
+        s["liked_by_me"] = user["id"] in likes
+        s.pop("likes", None)
+    return items
+
+
+@api.post("/trips/{trip_id}/suggestions/{suggestion_id}/like")
+async def toggle_like_suggestion(trip_id: str, suggestion_id: str, user: dict = Depends(get_current_user)):
+    await _trip_for_user(trip_id, user["id"])
+    sug = await db.trip_suggestions.find_one({"id": suggestion_id, "trip_id": trip_id})
+    if not sug:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    likes = set(sug.get("likes", []))
+    if user["id"] in likes:
+        likes.discard(user["id"])
+    else:
+        likes.add(user["id"])
+    await db.trip_suggestions.update_one(
+        {"id": suggestion_id},
+        {"$set": {"likes": list(likes)}},
+    )
+    return {"like_count": len(likes), "liked_by_me": user["id"] in likes}
+
+
 # ============ Inbox (Admin Requests) ============
 class CodeRequestReq(BaseModel):
     message: Optional[str] = None  # optional note to admin
@@ -707,6 +799,8 @@ async def startup():
     await db.admin_requests.create_index([("status", 1), ("created_at", -1)])
     await db.admin_requests.create_index("id", unique=True)
     await db.admin_requests.create_index([("status", 1), ("created_at", -1)])
+    await db.trip_messages.create_index([("trip_id", 1), ("created_at", 1)])
+    await db.trip_suggestions.create_index([("trip_id", 1), ("created_at", -1)])
 
     # Seed founder (Super Admin) — password set on first login
     founder_email = os.environ.get("FOUNDER_EMAIL", "").lower().strip()

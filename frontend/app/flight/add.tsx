@@ -22,6 +22,7 @@ export default function AddFlight() {
   const { trip_id } = useLocalSearchParams<{ trip_id?: string }>();
   const [trips, setTrips] = useState<any[]>([]);
   const [tripId, setTripId] = useState<string | undefined>(trip_id);
+  const [transportType, setTransportType] = useState<"flight" | "train" | "bus" | "ferry" | "car">("flight");
   const [airline, setAirline] = useState("");
   const [flightNo, setFlightNo] = useState("");
   const [depAirport, setDepAirport] = useState("");
@@ -29,6 +30,11 @@ export default function AddFlight() {
   const [depTime, setDepTime] = useState("");
   const [arrTime, setArrTime] = useState("");
   const [pnr, setPnr] = useState("");
+  const [bookingRef, setBookingRef] = useState("");
+  const [terminal, setTerminal] = useState("");
+  const [gate, setGate] = useState("");
+  const [seat, setSeat] = useState("");
+  const [checkinUrl, setCheckinUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -47,6 +53,7 @@ export default function AddFlight() {
     try {
       const { data } = await api.post("/flights", {
         trip_id: tripId || null,
+        transport_type: transportType,
         airline: airline.trim(),
         flight_number: flightNo.trim().toUpperCase(),
         departure_airport: depAirport.trim().toUpperCase(),
@@ -54,6 +61,11 @@ export default function AddFlight() {
         departure_time: new Date(depTime).toISOString(),
         arrival_time: new Date(arrTime).toISOString(),
         confirmation_number: pnr || null,
+        booking_reference: bookingRef || null,
+        terminal: terminal || null,
+        gate: gate || null,
+        seat: seat || null,
+        checkin_url: checkinUrl || null,
       });
       await scheduleCheckInReminder(data.id, data.airline, data.flight_number, data.departure_time);
       router.back();
@@ -75,6 +87,26 @@ export default function AddFlight() {
           <View style={{ width: 44 }} />
         </View>
         <ScrollView contentContainerStyle={{ padding: 24, gap: 8, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+          <Text style={s.label}>Transport type</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {[
+              { id: "flight", label: "Flight", icon: "send" },
+              { id: "train", label: "Train", icon: "git-commit" },
+              { id: "bus", label: "Bus", icon: "truck" },
+              { id: "ferry", label: "Ferry", icon: "anchor" },
+              { id: "car", label: "Car", icon: "navigation" },
+            ].map((t) => (
+              <TouchableOpacity
+                key={t.id}
+                onPress={() => setTransportType(t.id as any)}
+                style={[s.chip, transportType === t.id && s.chipSel]}
+                testID={`transport-${t.id}`}
+              >
+                <Feather name={t.icon as any} size={14} color={transportType === t.id ? "#fff" : theme.colors.secondary} />
+                <Text style={[s.chipText, transportType === t.id && s.chipTextSel, { marginLeft: 4 }]}>{t.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
           {trips.length > 0 ? (
             <>
               <Text style={s.label}>Attach to trip (optional)</Text>
@@ -110,6 +142,24 @@ export default function AddFlight() {
           <TextInput testID="flight-arrive" value={arrTime} onChangeText={setArrTime} placeholder="2026-06-10T20:30" style={s.input} placeholderTextColor={theme.colors.textMuted} />
           <Text style={s.label}>Confirmation # (optional)</Text>
           <TextInput value={pnr} onChangeText={setPnr} placeholder="PNR/ABC123" style={s.input} placeholderTextColor={theme.colors.textMuted} autoCapitalize="characters" />
+          <Text style={s.label}>Booking reference (optional)</Text>
+          <TextInput value={bookingRef} onChangeText={setBookingRef} placeholder="e.g. airline booking ref" style={s.input} placeholderTextColor={theme.colors.textMuted} autoCapitalize="characters" />
+          <View style={{ flexDirection: "row", gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.label}>Terminal</Text>
+              <TextInput value={terminal} onChangeText={setTerminal} placeholder="B" style={s.input} placeholderTextColor={theme.colors.textMuted} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.label}>Gate</Text>
+              <TextInput value={gate} onChangeText={setGate} placeholder="B12" style={s.input} placeholderTextColor={theme.colors.textMuted} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.label}>Seat</Text>
+              <TextInput value={seat} onChangeText={setSeat} placeholder="14A" style={s.input} placeholderTextColor={theme.colors.textMuted} />
+            </View>
+          </View>
+          <Text style={s.label}>Check-in URL (optional)</Text>
+          <TextInput value={checkinUrl} onChangeText={setCheckinUrl} placeholder="https://airline.com/check-in" style={s.input} placeholderTextColor={theme.colors.textMuted} autoCapitalize="none" />
           {err ? <Text style={s.err}>{err}</Text> : null}
           <Text style={s.hint}>We’ll remind you to check in 24 hours before departure.</Text>
           <TouchableOpacity testID="submit-add-flight" style={[s.primary, busy && { opacity: 0.7 }]} onPress={submit} disabled={busy}>
@@ -131,6 +181,7 @@ const s = StyleSheet.create({
   chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 9999, backgroundColor: theme.colors.surfaceMuted },
   chipSel: { backgroundColor: theme.colors.primary },
   chipText: { color: theme.colors.text, fontWeight: "700", fontSize: 12 },
+  chipTextSel: { color: "#fff" },
   chipTextSel: { color: "#fff" },
   err: { color: "#B03A2E", fontSize: 13, marginTop: 8 },
   hint: { fontSize: 12, color: theme.colors.textMuted, marginTop: 12 },
