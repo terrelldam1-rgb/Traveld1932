@@ -151,6 +151,7 @@ export default function TripDetail() {
                 <Feather name="sliders" size={18} color="#fff" />
               </TouchableOpacity>
             ) : null}
+            </View>
           </View>
           <View style={s.heroBottom}>
             <Text style={s.heroDest}>{trip.destination}</Text>
