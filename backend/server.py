@@ -104,6 +104,7 @@ def public_user(u: dict) -> dict:
         "email": u["email"],
         "name": u.get("name", ""),
         "avatar_url": u.get("avatar_url"),
+        "role": u.get("role", "user"),
     }
 
 
@@ -192,7 +193,17 @@ async def register(body: RegisterReq):
 async def login(body: LoginReq):
     email = body.email.lower().strip()
     user = await db.users.find_one({"email": email})
-    if not user or not verify_password(body.password, user["password_hash"]):
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Founder/seeded account: set password on first login
+    if user.get("password_pending"):
+        new_hash = hash_password(body.password)
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"password_hash": new_hash, "password_pending": False}},
+        )
+        user["password_hash"] = new_hash
+    elif not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email)
     return {"token": token, "user": public_user(user)}
@@ -538,7 +549,63 @@ async def startup():
     await db.flights.create_index([("user_id", 1), ("departure_time", 1)])
     await db.payment_transactions.create_index("session_id", unique=True)
     await db.payment_transactions.create_index("trip_id")
+
+    # Seed founder (Super Admin) — password set on first login
+    founder_email = os.environ.get("FOUNDER_EMAIL", "").lower().strip()
+    if founder_email:
+        existing = await db.users.find_one({"email": founder_email})
+        if not existing:
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "email": founder_email,
+                "name": os.environ.get("FOUNDER_NAME", "Founder"),
+                "password_hash": hash_password(secrets.token_urlsafe(32)),
+                "password_pending": True,
+                "role": "admin",
+                "avatar_url": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logging.info(f"Seeded founder account: {founder_email} (password set on first login)")
+        elif existing.get("role") != "admin":
+            await db.users.update_one({"email": founder_email}, {"$set": {"role": "admin"}})
+
     logging.info("Indexes ready")
+
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+@api.get("/admin/trips")
+async def admin_list_trips(_: dict = Depends(require_admin)):
+    trips = await db.trips.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [await _enrich_trip(t) for t in trips]
+
+
+@api.get("/admin/users")
+async def admin_list_users(_: dict = Depends(require_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+    for u in users:
+        u.pop("password_pending", None)
+    return users
+
+
+@api.get("/admin/stats")
+async def admin_stats(_: dict = Depends(require_admin)):
+    trips_count = await db.trips.count_documents({})
+    users_count = await db.users.count_documents({})
+    flights_count = await db.flights.count_documents({})
+    paid_txns = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0, "amount": 1}).to_list(5000)
+    total_pooled = round(sum(t.get("amount", 0) for t in paid_txns), 2)
+    return {
+        "users": users_count,
+        "trips": trips_count,
+        "flights": flights_count,
+        "total_pooled_usd": total_pooled,
+        "paid_transactions": len(paid_txns),
+    }
 
 
 @app.on_event("shutdown")

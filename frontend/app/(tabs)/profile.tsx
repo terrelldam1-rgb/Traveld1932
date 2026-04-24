@@ -18,6 +18,12 @@ export default function Profile() {
         </View>
         <Text style={s.name}>{user?.name}</Text>
         <Text style={s.email}>{user?.email}</Text>
+        {(user as any)?.role === "admin" ? (
+          <View style={s.founderBadge}>
+            <Feather name="star" size={12} color="#fff" />
+            <Text style={s.founderText}>FOUNDER · SUPER ADMIN</Text>
+          </View>
+        ) : null}
       </View>
       <View style={{ paddingHorizontal: 24, marginTop: 16, gap: 12 }}>
         <Row icon="bell" label="Notifications enabled" />
@@ -57,4 +63,6 @@ const s = StyleSheet.create({
   rowText: { fontSize: 14, color: theme.colors.text, fontWeight: "500" },
   logout: { backgroundColor: theme.colors.secondary, paddingVertical: 16, borderRadius: 9999, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 8 },
   logoutText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  founderBadge: { marginTop: 12, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 9999 },
+  founderText: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
 });
