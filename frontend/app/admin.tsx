@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   RefreshControl,
   ScrollView,
@@ -143,7 +144,10 @@ export default function AdminDashboard() {
           renderItem={({ item }) => (
             <View style={s.row}>
               <View style={{ flex: 1 }}>
-                <Text style={s.rowTitle}>{item.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={s.rowTitle}>{item.name}</Text>
+                  {item.featured ? <Feather name="star" size={12} color={theme.colors.sunny} /> : null}
+                </View>
                 <Text style={s.muted}>
                   {item.destination} · {item.members_detail?.length || 0} travelers
                 </Text>
@@ -152,6 +156,39 @@ export default function AdminDashboard() {
                   {new Date(item.start_date).toLocaleDateString()}–
                   {new Date(item.end_date).toLocaleDateString()}
                 </Text>
+                <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await api.patch(`/admin/trips/${item.id}/feature`, { featured: !item.featured });
+                        load();
+                      } catch (e) { Alert.alert("Error", formatApiError(e)); }
+                    }}
+                    style={[s.adminAction, item.featured && { backgroundColor: theme.colors.sunny }]}
+                    testID={`feature-${item.id}`}
+                  >
+                    <Feather name="star" size={12} color={item.featured ? "#fff" : theme.colors.primary} />
+                    <Text style={[s.adminActionText, item.featured && { color: "#fff" }]}>{item.featured ? "Featured" : "Feature"}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Alert.alert("Delete trip?", `Remove "${item.name}" permanently.`, [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Delete", style: "destructive", onPress: async () => {
+                          try {
+                            await api.delete(`/admin/trips/${item.id}`);
+                            load();
+                          } catch (e) { Alert.alert("Error", formatApiError(e)); }
+                        }},
+                      ]);
+                    }}
+                    style={[s.adminAction, { backgroundColor: "#FDECEA" }]}
+                    testID={`del-trip-${item.id}`}
+                  >
+                    <Feather name="trash-2" size={12} color="#B03A2E" />
+                    <Text style={[s.adminActionText, { color: "#B03A2E" }]}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               <View style={{ alignItems: "flex-end" }}>
                 <Text style={s.rowAmt}>${item.total_raised.toFixed(0)}</Text>
@@ -308,6 +345,8 @@ const s = StyleSheet.create({
   avaText: { color: "#fff", fontWeight: "800" },
   adminTag: { backgroundColor: theme.colors.primary, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 9999 },
   adminTagText: { fontSize: 9, fontWeight: "800", color: "#fff", letterSpacing: 1 },
+  adminAction: { flexDirection: "row", gap: 4, alignItems: "center", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight },
+  adminActionText: { fontSize: 11, fontWeight: "700", color: theme.colors.primary },
   statusTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 9999 },
   statusText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   resolveBtn: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 14, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight, marginTop: 4 },

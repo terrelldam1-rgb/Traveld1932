@@ -273,6 +273,127 @@ async def login(body: LoginReq):
 
 
 @api.get("/auth/me")
+
+
+class AnnouncementReq(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+@api.delete("/admin/trips/{trip_id}")
+async def admin_delete_trip(trip_id: str, _: dict = Depends(require_admin)):
+    res = await db.trips.delete_one({"id": trip_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    await db.flights.delete_many({"trip_id": trip_id})
+    await db.trip_messages.delete_many({"trip_id": trip_id})
+    await db.trip_suggestions.delete_many({"trip_id": trip_id})
+    return {"ok": True}
+
+
+@api.patch("/admin/trips/{trip_id}/feature")
+async def admin_toggle_feature(trip_id: str, body: dict, _: dict = Depends(require_admin)):
+    featured = bool(body.get("featured"))
+    res = await db.trips.update_one({"id": trip_id}, {"$set": {"featured": featured}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return {"featured": featured}
+
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: dict = Depends(require_admin)):
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.delete_one({"id": user_id})
+    # Also remove from any trip members
+    await db.trips.update_many({}, {"$pull": {"members": {"user_id": user_id}}})
+    return {"ok": True}
+
+
+@api.post("/admin/dm/{user_id}")
+async def admin_dm(user_id: str, body: MessageCreate, admin: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Store as a support thread item in admin_requests inbox
+    doc = {
+        "id": str(uuid.uuid4()),
+        "type": "admin_dm",
+        "from_user_id": admin["id"],
+        "from_name": admin.get("name"),
+        "from_email": admin["email"],
+        "to_user_id": user_id,
+        "to_email": target["email"],
+        "message": body.text.strip(),
+        "status": "sent",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_requests.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/trips/{trip_id}/members/{user_id}")
+async def remove_member(trip_id: str, user_id: str, actor: dict = Depends(get_current_user)):
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    is_host = trip["host_id"] == actor["id"]
+    is_admin = actor.get("role") == "admin"
+    if not (is_host or is_admin):
+        raise HTTPException(status_code=403, detail="Only host or admin can remove members")
+    if trip["host_id"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot remove host")
+    await db.trips.update_one(
+        {"id": trip_id},
+        {"$pull": {"members": {"user_id": user_id}}},
+    )
+    return {"ok": True}
+
+
+@api.post("/trips/{trip_id}/announcements")
+async def post_announcement(trip_id: str, body: AnnouncementReq, user: dict = Depends(get_current_user)):
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    is_host = trip["host_id"] == user["id"]
+    is_admin = user.get("role") == "admin"
+    if not (is_host or is_admin):
+        raise HTTPException(status_code=403, detail="Only host or admin can announce")
+    msg = {
+        "id": str(uuid.uuid4()),
+        "trip_id": trip_id,
+        "user_id": user["id"],
+        "user_name": user.get("name"),
+        "text": body.text.strip(),
+        "is_announcement": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trip_messages.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
+
+@api.get("/trips/{trip_id}/host-summary")
+async def host_summary(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await _trip_for_user(trip_id, user["id"])
+    is_host = trip["host_id"] == user["id"]
+    is_admin = user.get("role") == "admin"
+    if not (is_host or is_admin):
+        raise HTTPException(status_code=403, detail="Only host or admin")
+    enriched = await _enrich_trip(trip)
+    txns = await db.payment_transactions.find(
+        {"trip_id": trip_id, "payment_status": "paid"}, {"_id": 0}
+    ).to_list(1000)
+    return {
+        **enriched,
+        "paid_transactions": txns,
+        "total_raised": enriched["total_raised"],
+    }
+
+
 async def me(user: dict = Depends(get_current_user)):
     return public_user(user)
 

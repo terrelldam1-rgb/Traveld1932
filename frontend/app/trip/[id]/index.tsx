@@ -134,6 +134,7 @@ export default function TripDetail() {
             <TouchableOpacity onPress={() => router.back()} style={s.iconBtn}>
               <Feather name="arrow-left" size={20} color="#fff" />
             </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 8 }}>
             <TouchableOpacity
               testID="invite-share-btn"
               onPress={() => router.push(`/trip/${id}/invite`)}
@@ -141,6 +142,15 @@ export default function TripDetail() {
             >
               <Feather name="share-2" size={18} color="#fff" />
             </TouchableOpacity>
+            {isHost || (user as any)?.role === "admin" ? (
+              <TouchableOpacity
+                testID="host-dashboard-btn"
+                onPress={() => router.push(`/trip/${id}/host`)}
+                style={s.iconBtn}
+              >
+                <Feather name="sliders" size={18} color="#fff" />
+              </TouchableOpacity>
+            ) : null}
           </View>
           <View style={s.heroBottom}>
             <Text style={s.heroDest}>{trip.destination}</Text>
