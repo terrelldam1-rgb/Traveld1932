@@ -165,7 +165,7 @@ export default function TripDetail() {
         {tab === "flights" && (
           <>
             <TouchableOpacity
-              testID="trip-add-flight-btn"
+              testID="add-flight-btn"
               style={s.addFlightBtn}
               onPress={() => router.push({ pathname: "/flight/add", params: { trip_id: id } })}
             >

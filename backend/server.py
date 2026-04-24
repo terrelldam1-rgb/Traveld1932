@@ -460,7 +460,13 @@ async def checkout_status(session_id: str, request: Request, user: dict = Depend
 
     origin = str(request.base_url).rstrip("/")
     stripe_client = _stripe(origin)
-    res: CheckoutStatusResponse = await stripe_client.get_checkout_status(session_id)
+    try:
+        res: CheckoutStatusResponse = await stripe_client.get_checkout_status(session_id)
+    except Exception as e:
+        # Stripe may not have the session indexed yet right after creation,
+        # or the session was canceled/expired. Report pending gracefully.
+        logging.info(f"Stripe status lookup pending for {session_id}: {e}")
+        return {"payment_status": "pending", "status": "pending", "amount": txn["amount"]}
 
     # Idempotent update
     new_fields = {
