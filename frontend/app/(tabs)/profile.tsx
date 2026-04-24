@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../src/auth";
@@ -6,6 +7,7 @@ import { theme } from "../../src/theme";
 
 export default function Profile() {
   const { user, signOut } = useAuth();
+  const router = useRouter();
 
   return (
     <SafeAreaView style={s.safe} edges={["top"]}>
@@ -26,6 +28,17 @@ export default function Profile() {
         ) : null}
       </View>
       <View style={{ paddingHorizontal: 24, marginTop: 16, gap: 12 }}>
+        {(user as any)?.role === "admin" ? (
+          <TouchableOpacity
+            testID="open-admin-dashboard"
+            onPress={() => router.push("/admin")}
+            style={s.adminBtn}
+          >
+            <Feather name="shield" size={18} color="#fff" />
+            <Text style={s.adminBtnText}>Open Admin Dashboard</Text>
+            <Feather name="chevron-right" size={18} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
         <Row icon="bell" label="Notifications enabled" />
         <Row icon="shield" label="Your data is encrypted" />
         <Row icon="globe" label="Powered by Travel'D" />
@@ -65,4 +78,6 @@ const s = StyleSheet.create({
   logoutText: { color: "#fff", fontWeight: "700", fontSize: 15 },
   founderBadge: { marginTop: 12, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 9999 },
   founderText: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  adminBtn: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: theme.colors.primary, paddingVertical: 16, paddingHorizontal: 18, borderRadius: 16 },
+  adminBtnText: { flex: 1, color: "#fff", fontWeight: "700", fontSize: 15 },
 });
