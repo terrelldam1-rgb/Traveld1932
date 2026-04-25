@@ -195,6 +195,8 @@ class SupportReq(BaseModel):
 class FlightCreate(BaseModel):
     trip_id: Optional[str] = None
     transport_type: Literal["flight", "train", "bus", "ferry", "car", "shuttle", "rideshare", "other"] = "flight"
+    # Host/admin can submit transport on behalf of another trip member
+    assignee_user_id: Optional[str] = None
     # Generic fields used by all types (relabeled in UI):
     airline: str  # operator / airline / rental company
     flight_number: str  # flight # / train # / bus # / ferry # / reservation #
@@ -272,11 +274,18 @@ async def login(body: LoginReq):
     return {"token": token, "user": public_user(user)}
 
 
-@api.get("/auth/me")
-
-
 class AnnouncementReq(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+@api.get("/auth/me")
+async def get_me(user: dict = Depends(get_current_user)):
+    refreshed = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {
+        **public_user(refreshed or user),
+        "phone": (refreshed or user).get("phone"),
+        "emergency_contact": (refreshed or user).get("emergency_contact"),
+    }
 
 
 @api.delete("/admin/trips/{trip_id}")
@@ -392,10 +401,6 @@ async def host_summary(trip_id: str, user: dict = Depends(get_current_user)):
         "paid_transactions": txns,
         "total_raised": enriched["total_raised"],
     }
-
-
-async def me(user: dict = Depends(get_current_user)):
-    return public_user(user)
 
 
 @api.patch("/auth/me")
@@ -720,18 +725,84 @@ async def leave_trip(trip_id: str, user: dict = Depends(get_current_user)):
 # ============ Flights ============
 @api.post("/flights")
 async def add_flight(body: FlightCreate, user: dict = Depends(get_current_user)):
+    target_user_id = user["id"]
+    submitted_by = user["id"]
+    submitted_for_other = False
     if body.trip_id:
-        await _trip_for_user(body.trip_id, user["id"])
+        trip = await _trip_for_user(body.trip_id, user["id"])
+        # If host/admin is assigning this transport to another participant
+        if body.assignee_user_id and body.assignee_user_id != user["id"]:
+            is_host = trip["host_id"] == user["id"]
+            is_admin = user.get("role") == "admin"
+            if not (is_host or is_admin):
+                raise HTTPException(status_code=403, detail="Only host or admin can assign transport to others")
+            member_ids = [m["user_id"] for m in trip.get("members", [])]
+            if body.assignee_user_id not in member_ids:
+                raise HTTPException(status_code=400, detail="Assignee is not a member of this trip")
+            target_user_id = body.assignee_user_id
+            submitted_for_other = True
     fid = str(uuid.uuid4())
     doc = body.dict()
+    doc.pop("assignee_user_id", None)
     doc.update({
         "id": fid,
-        "user_id": user["id"],
+        "user_id": target_user_id,
+        "submitted_by": submitted_by,
+        "submitted_for_other": submitted_for_other,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     await db.flights.insert_one(doc)
     doc.pop("_id", None)
+    # Notify the assignee via trip chat (announcement-style) so they see it on their phone
+    if submitted_for_other and body.trip_id:
+        try:
+            await db.trip_messages.insert_one({
+                "id": str(uuid.uuid4()),
+                "trip_id": body.trip_id,
+                "user_id": user["id"],
+                "user_name": user.get("name"),
+                "text": f"✈️ {user.get('name','Host')} added a {body.transport_type} for a member ({body.airline} {body.flight_number}). Open the trip to review.",
+                "is_announcement": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
     return doc
+
+
+@api.get("/trips/{trip_id}/transport-status")
+async def trip_transport_status(trip_id: str, user: dict = Depends(get_current_user)):
+    """Return per-member transport submission status — host/admin/members can view."""
+    trip = await _trip_for_user(trip_id, user["id"])
+    members = trip.get("members", [])
+    user_ids = [m["user_id"] for m in members]
+    users = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "password_hash": 0}).to_list(200)
+    users_map = {u["id"]: u for u in users}
+    flights = await db.flights.find({"trip_id": trip_id}, {"_id": 0}).to_list(500)
+    by_user: dict = {}
+    for f in flights:
+        by_user.setdefault(f.get("user_id"), []).append(f)
+    rows = []
+    for m in members:
+        uid = m["user_id"]
+        u = users_map.get(uid, {})
+        items = by_user.get(uid, [])
+        rows.append({
+            "user_id": uid,
+            "name": u.get("name", ""),
+            "email": u.get("email", ""),
+            "role": m.get("role", "member"),
+            "transport_count": len(items),
+            "has_transport": len(items) > 0,
+            "items": items,
+        })
+    missing = [r for r in rows if not r["has_transport"]]
+    return {
+        "trip_id": trip_id,
+        "members": rows,
+        "missing_count": len(missing),
+        "submitted_count": len(rows) - len(missing),
+    }
 
 
 @api.get("/flights")

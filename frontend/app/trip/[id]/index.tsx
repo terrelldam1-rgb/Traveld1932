@@ -182,6 +182,49 @@ export default function TripDetail() {
       <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 160, gap: 16 }}>
         {tab === "pool" && (
           <>
+            {/* About / details card */}
+            {(trip.description || trip.lodging || (trip.itinerary && trip.itinerary.length > 0) || (trip.tags && trip.tags.length > 0)) ? (
+              <View style={s.aboutCard}>
+                {trip.tags && trip.tags.length > 0 ? (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                    {trip.tags.map((t: string) => (
+                      <View key={t} style={s.aboutTag}>
+                        <Text style={s.aboutTagText}>{t.replace(/_/g, " ").toUpperCase()}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                {trip.description ? (
+                  <>
+                    <Text style={s.aboutTitle}>About this trip</Text>
+                    <Text style={s.aboutBody}>{trip.description}</Text>
+                  </>
+                ) : null}
+                {trip.lodging ? (
+                  <>
+                    <Text style={[s.aboutTitle, { marginTop: 12 }]}>Lodging</Text>
+                    <Text style={s.aboutBody}>{trip.lodging}</Text>
+                  </>
+                ) : null}
+                {trip.itinerary && trip.itinerary.length > 0 ? (
+                  <>
+                    <Text style={[s.aboutTitle, { marginTop: 12 }]}>Itinerary</Text>
+                    {trip.itinerary.map((d: any, i: number) => (
+                      <View key={i} style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                        <View style={s.dayChip}>
+                          <Text style={s.dayChipText}>D{d.day || i + 1}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.dayTitle}>{d.title}</Text>
+                          {d.details ? <Text style={s.dayDetails}>{d.details}</Text> : null}
+                        </View>
+                      </View>
+                    ))}
+                  </>
+                ) : null}
+              </View>
+            ) : null}
+
             {trip.solo_price > 0 ? (
               <View style={s.soloCard}>
                 <View style={{ flex: 1 }}>
@@ -511,4 +554,13 @@ const s = StyleSheet.create({
   sugTitle: { fontSize: 15, fontWeight: "700", color: theme.colors.text },
   likeBtn: { flexDirection: "row", gap: 4, alignItems: "center", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight },
   likeText: { fontSize: 12, fontWeight: "700", color: theme.colors.primary },
+  aboutCard: { backgroundColor: "#fff", borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border, padding: 16 },
+  aboutTitle: { fontSize: 13, fontWeight: "800", color: theme.colors.primary, letterSpacing: 0.6, marginBottom: 4 },
+  aboutBody: { fontSize: 14, color: theme.colors.text, lineHeight: 20 },
+  aboutTag: { backgroundColor: theme.colors.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 9999 },
+  aboutTagText: { fontSize: 10, fontWeight: "800", color: theme.colors.primary, letterSpacing: 0.8 },
+  dayChip: { width: 36, height: 28, borderRadius: 9999, backgroundColor: theme.colors.primary, alignItems: "center", justifyContent: "center" },
+  dayChipText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
+  dayTitle: { fontSize: 14, fontWeight: "700", color: theme.colors.text },
+  dayDetails: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2, lineHeight: 17 },
 });

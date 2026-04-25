@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api, formatApiError } from "../../src/api";
+import { useAuth } from "../../src/auth";
 import { scheduleCheckInReminder } from "../../src/notifications";
 import { theme } from "../../src/theme";
 
@@ -32,10 +33,14 @@ const TYPES: { id: T; label: string; icon: string }[] = [
 
 export default function AddTransport() {
   const router = useRouter();
-  const { trip_id } = useLocalSearchParams<{ trip_id?: string }>();
+  const { user } = useAuth();
+  const { trip_id, assignee } = useLocalSearchParams<{ trip_id?: string; assignee?: string }>();
   const [trips, setTrips] = useState<any[]>([]);
   const [tripId, setTripId] = useState<string | undefined>(trip_id);
   const [type, setType] = useState<T>("flight");
+  const [members, setMembers] = useState<any[]>([]);
+  const [assigneeId, setAssigneeId] = useState<string | undefined>(assignee);
+  const [canManage, setCanManage] = useState(false);
 
   // Common fields (meaning shifts based on type)
   const [operator, setOperator] = useState(""); // airline / train op / bus op / ferry op / rental co
@@ -70,6 +75,27 @@ export default function AddTransport() {
   useEffect(() => {
     api.get("/trips").then(({ data }) => setTrips(data)).catch(() => {});
   }, []);
+
+  // Whenever trip changes, fetch members and decide if current user can assign on behalf
+  useEffect(() => {
+    setMembers([]);
+    setCanManage(false);
+    if (!tripId) {
+      setAssigneeId(undefined);
+      return;
+    }
+    api
+      .get(`/trips/${tripId}`)
+      .then(({ data }) => {
+        const detail = data.members_detail || [];
+        setMembers(detail);
+        const isHost = data.host_id === user?.id;
+        const isAdmin = user?.role === "admin";
+        setCanManage(Boolean(isHost || isAdmin));
+        if (!assigneeId) setAssigneeId(user?.id);
+      })
+      .catch(() => {});
+  }, [tripId, user?.id, user?.role, assigneeId]);
 
   const validDT = (v: string) => !isNaN(Date.parse(v));
 
@@ -113,6 +139,7 @@ export default function AddTransport() {
       const payload: any = {
         trip_id: tripId || null,
         transport_type: type,
+        assignee_user_id: canManage && assigneeId && assigneeId !== user?.id ? assigneeId : null,
         airline: operator.trim(),
         flight_number: number.trim().toUpperCase(),
         departure_airport: fromLoc.trim().toUpperCase(),
@@ -133,8 +160,8 @@ export default function AddTransport() {
       }
 
       const { data } = await api.post("/flights", payload);
-      // Only schedule check-in reminder for flights (24h before departure)
-      if (type === "flight") {
+      // Only schedule check-in reminder for flights (24h before departure) — and only when adding for self
+      if (type === "flight" && (!payload.assignee_user_id || payload.assignee_user_id === user?.id)) {
         await scheduleCheckInReminder(data.id, data.airline, data.flight_number, data.departure_time);
       }
       router.back();
@@ -183,6 +210,36 @@ export default function AddTransport() {
                     <Text style={[s.chipText, tripId === tr.id && { color: "#fff" }]}>{tr.name}</Text>
                   </TouchableOpacity>
                 ))}
+              </ScrollView>
+            </>
+          ) : null}
+
+          {canManage && tripId && members.length > 0 ? (
+            <>
+              <Text style={s.label}>Add for traveler</Text>
+              <Text style={s.hint}>As host/admin you can submit transport on behalf of any member.</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {members.map((m: any) => {
+                  const on = (assigneeId || user?.id) === m.id;
+                  const isMe = m.id === user?.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      onPress={() => setAssigneeId(m.id)}
+                      style={[s.chip, on && s.chipSel]}
+                      testID={`assignee-${m.id}`}
+                    >
+                      <Feather
+                        name={isMe ? "user" : "users"}
+                        size={12}
+                        color={on ? "#fff" : theme.colors.secondary}
+                      />
+                      <Text style={[s.chipText, on && { color: "#fff" }, { marginLeft: 4 }]}>
+                        {isMe ? "Myself" : m.name || m.email}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </ScrollView>
             </>
           ) : null}

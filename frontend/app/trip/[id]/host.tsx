@@ -27,11 +27,16 @@ export default function HostDashboard() {
   const [loading, setLoading] = useState(true);
   const [announcement, setAnnouncement] = useState("");
   const [busy, setBusy] = useState(false);
+  const [transportStatus, setTransportStatus] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const { data } = await api.get(`/trips/${id}/host-summary`);
-      setTrip(data);
+      const [s1, s2] = await Promise.all([
+        api.get(`/trips/${id}/host-summary`),
+        api.get(`/trips/${id}/transport-status`),
+      ]);
+      setTrip(s1.data);
+      setTransportStatus(s2.data);
     } catch (e) {
       Alert.alert("Error", formatApiError(e));
       router.back();
@@ -195,6 +200,54 @@ export default function HostDashboard() {
             ))}
           </View>
 
+          {/* Transport status */}
+          {transportStatus ? (
+            <View style={s.card}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <Feather name="send" size={16} color={theme.colors.primary} />
+                <Text style={s.cardTitle}>Transportation status</Text>
+                <View style={{ flex: 1 }} />
+                <Text style={s.muted}>
+                  {transportStatus.submitted_count}/{transportStatus.members.length} submitted
+                </Text>
+              </View>
+              {transportStatus.missing_count > 0 ? (
+                <View style={s.warnBanner}>
+                  <Feather name="alert-circle" size={14} color="#B65A00" />
+                  <Text style={s.warnText}>
+                    {transportStatus.missing_count} traveler{transportStatus.missing_count === 1 ? "" : "s"} haven&apos;t added transport yet.
+                  </Text>
+                </View>
+              ) : (
+                <View style={s.okBanner}>
+                  <Feather name="check-circle" size={14} color={theme.colors.success} />
+                  <Text style={s.okText}>Everyone has submitted their transportation. ✈️</Text>
+                </View>
+              )}
+              {transportStatus.members.map((row: any) => (
+                <View key={row.user_id} style={s.memberRow}>
+                  <View style={[s.dot, { backgroundColor: row.has_transport ? theme.colors.success : "#E68A4A" }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.mName}>{row.name || row.email}</Text>
+                    <Text style={s.muted}>
+                      {row.has_transport
+                        ? `${row.transport_count} transport item${row.transport_count === 1 ? "" : "s"}`
+                        : "No transport added yet"}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={s.smallBtn}
+                    onPress={() => router.push(`/flight/add?trip_id=${id}&assignee=${row.user_id}`)}
+                    testID={`add-transport-for-${row.user_id}`}
+                  >
+                    <Feather name="plus" size={12} color={theme.colors.primary} />
+                    <Text style={s.smallBtnText}>{row.has_transport ? "Add" : "Add for them"}</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
           <TouchableOpacity onPress={() => router.push(`/trip/${id}`)} style={s.outlineBtn}>
             <Feather name="external-link" size={14} color={theme.colors.primary} />
             <Text style={s.outlineBtnText}>View trip as member</Text>
@@ -245,4 +298,11 @@ const s = StyleSheet.create({
   hostTag: { backgroundColor: theme.colors.surfaceHighlight, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 9999 },
   hostTagText: { fontSize: 9, fontWeight: "800", color: theme.colors.primary, letterSpacing: 1 },
   removeBtn: { width: 32, height: 32, borderRadius: 9999, alignItems: "center", justifyContent: "center", backgroundColor: "#FDECEA" },
+  warnBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FFF4E5", borderRadius: 12, padding: 10, marginVertical: 6 },
+  warnText: { color: "#B65A00", fontSize: 12, fontWeight: "700", flex: 1 },
+  okBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#E6F7F2", borderRadius: 12, padding: 10, marginVertical: 6 },
+  okText: { color: "#0E8A6F", fontSize: 12, fontWeight: "700", flex: 1 },
+  dot: { width: 10, height: 10, borderRadius: 9999, marginRight: 6 },
+  smallBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 9999, borderWidth: 1, borderColor: theme.colors.primary, backgroundColor: "#fff" },
+  smallBtnText: { color: theme.colors.primary, fontWeight: "700", fontSize: 11 },
 });

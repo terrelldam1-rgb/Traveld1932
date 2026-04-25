@@ -6,6 +6,9 @@ export type User = {
   email: string;
   name: string;
   avatar_url?: string | null;
+  role?: "user" | "admin";
+  phone?: string | null;
+  emergency_contact?: string | null;
 };
 
 type Ctx = {
