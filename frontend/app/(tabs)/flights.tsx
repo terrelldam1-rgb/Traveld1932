@@ -103,14 +103,19 @@ export default function Flights() {
           };
           const meta = TYPE_META[tType] || TYPE_META.other;
           return (
-            <View style={s.card}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => router.push(`/flight/${item.id}`)}
+              style={s.card}
+              testID={`transport-card-${item.id}`}
+            >
               <View style={s.cardTop}>
                 <View style={s.airlineBadge}>
                   <Feather name={meta.icon as any} size={14} color={theme.colors.primary} />
                   <Text style={s.airlineText}>{meta.label.toUpperCase()} · {item.airline}</Text>
                 </View>
                 <Text style={s.flightNo}>{item.flight_number}</Text>
-                <TouchableOpacity onPress={() => remove(item.id, item.reminder_id)}>
+                <TouchableOpacity onPress={() => remove(item.id, item.reminder_id)} hitSlop={10}>
                   <Feather name="trash-2" size={18} color={theme.colors.textMuted} />
                 </TouchableOpacity>
               </View>
@@ -153,8 +158,10 @@ export default function Flights() {
                 {item.confirmation_number ? (
                   <Text style={s.conf}>{tType === "car" ? "RES" : "PNR"} · {item.confirmation_number}</Text>
                 ) : null}
+                <View style={{ flex: 1 }} />
+                <Feather name="chevron-right" size={18} color={theme.colors.primary} />
               </View>
-            </View>
+            </TouchableOpacity>
           );
         }}
         ListEmptyComponent={

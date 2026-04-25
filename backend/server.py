@@ -251,13 +251,34 @@ class FlightCreate(BaseModel):
     confirmation_number: Optional[str] = None
     booking_reference: Optional[str] = None
     notes: Optional[str] = None
-    # Type-specific extras (free-form)
-    extras: dict = Field(default_factory=dict)
-    # Deprecated top-level — kept only for older clients
-    terminal: Optional[str] = None
+    # Ticket details
+    terminal: Optional[str] = None  # departure terminal
+    terminal_arrival: Optional[str] = None  # arrival terminal
     gate: Optional[str] = None
     seat: Optional[str] = None
+    baggage_info: Optional[str] = None  # e.g. "1 carry-on + 1 checked 23kg"
     checkin_url: Optional[str] = None
+    # Type-specific extras (free-form)
+    extras: dict = Field(default_factory=dict)
+
+
+class FlightUpdate(BaseModel):
+    airline: Optional[str] = None
+    flight_number: Optional[str] = None
+    departure_airport: Optional[str] = None
+    arrival_airport: Optional[str] = None
+    departure_time: Optional[str] = None
+    arrival_time: Optional[str] = None
+    confirmation_number: Optional[str] = None
+    booking_reference: Optional[str] = None
+    notes: Optional[str] = None
+    terminal: Optional[str] = None
+    terminal_arrival: Optional[str] = None
+    gate: Optional[str] = None
+    seat: Optional[str] = None
+    baggage_info: Optional[str] = None
+    checkin_url: Optional[str] = None
+    extras: Optional[dict] = None
 
 
 class MessageCreate(BaseModel):
@@ -981,11 +1002,57 @@ async def list_flights(
     return flights
 
 
+@api.get("/flights/{flight_id}")
+async def get_flight(flight_id: str, user: dict = Depends(get_current_user)):
+    f = await db.flights.find_one({"id": flight_id}, {"_id": 0})
+    if not f:
+        raise HTTPException(status_code=404, detail="Not found")
+    # Owner, host of trip, or admin can view
+    is_owner = f.get("user_id") == user["id"]
+    is_admin = user.get("role") == "admin"
+    is_host = False
+    if f.get("trip_id"):
+        trip = await db.trips.find_one({"id": f["trip_id"]}, {"_id": 0})
+        is_host = bool(trip and trip.get("host_id") == user["id"])
+    if not (is_owner or is_admin or is_host):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    return f
+
+
+@api.patch("/flights/{flight_id}")
+async def update_flight(flight_id: str, body: FlightUpdate, user: dict = Depends(get_current_user)):
+    f = await db.flights.find_one({"id": flight_id}, {"_id": 0})
+    if not f:
+        raise HTTPException(status_code=404, detail="Not found")
+    is_owner = f.get("user_id") == user["id"]
+    is_admin = user.get("role") == "admin"
+    is_host = False
+    if f.get("trip_id"):
+        trip = await db.trips.find_one({"id": f["trip_id"]}, {"_id": 0})
+        is_host = bool(trip and trip.get("host_id") == user["id"])
+    if not (is_owner or is_admin or is_host):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    updates = {k: v for k, v in body.dict().items() if v is not None}
+    if updates:
+        await db.flights.update_one({"id": flight_id}, {"$set": updates})
+    updated = await db.flights.find_one({"id": flight_id}, {"_id": 0})
+    return updated
+
+
 @api.delete("/flights/{flight_id}")
 async def delete_flight(flight_id: str, user: dict = Depends(get_current_user)):
-    res = await db.flights.delete_one({"id": flight_id, "user_id": user["id"]})
-    if res.deleted_count == 0:
+    f = await db.flights.find_one({"id": flight_id}, {"_id": 0})
+    if not f:
         raise HTTPException(status_code=404, detail="Flight not found")
+    is_owner = f.get("user_id") == user["id"]
+    is_admin = user.get("role") == "admin"
+    is_host = False
+    if f.get("trip_id"):
+        trip = await db.trips.find_one({"id": f["trip_id"]}, {"_id": 0})
+        is_host = bool(trip and trip.get("host_id") == user["id"])
+    if not (is_owner or is_admin or is_host):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.flights.delete_one({"id": flight_id})
     return {"ok": True}
 
 

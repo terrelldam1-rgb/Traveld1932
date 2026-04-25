@@ -55,8 +55,10 @@ export default function AddTransport() {
 
   // Flight-only
   const [terminal, setTerminal] = useState("");
+  const [terminalArrival, setTerminalArrival] = useState("");
   const [gate, setGate] = useState("");
   const [seat, setSeat] = useState("");
+  const [baggageInfo, setBaggageInfo] = useState("");
   const [checkinUrl, setCheckinUrl] = useState("");
   // Train
   const [coach, setCoach] = useState("");
@@ -151,12 +153,14 @@ export default function AddTransport() {
         notes: notes || null,
         extras,
       };
-      // Flight-only top-level (kept for legacy)
-      if (type === "flight") {
-        payload.terminal = terminal || null;
-        payload.gate = gate || null;
-        payload.seat = seat || null;
-        payload.checkin_url = checkinUrl || null;
+      // Top-level ticket details (apply to all types, relabeled in UI):
+      if (terminal) payload.terminal = terminal;
+      if (terminalArrival) payload.terminal_arrival = terminalArrival;
+      if (gate) payload.gate = gate;
+      if (seat) payload.seat = seat;
+      if (baggageInfo) payload.baggage_info = baggageInfo;
+      if (type === "flight" && checkinUrl) {
+        payload.checkin_url = checkinUrl;
       }
 
       const { data } = await api.post("/flights", payload);
@@ -278,8 +282,12 @@ export default function AddTransport() {
             <>
               <View style={{ flexDirection: "row", gap: 12 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.label}>Terminal</Text>
+                  <Text style={s.label}>Dep Terminal</Text>
                   <TextInput value={terminal} onChangeText={setTerminal} placeholder="B" style={s.input} placeholderTextColor={theme.colors.textMuted} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.label}>Arr Terminal</Text>
+                  <TextInput value={terminalArrival} onChangeText={setTerminalArrival} placeholder="2" style={s.input} placeholderTextColor={theme.colors.textMuted} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.label}>Gate</Text>
@@ -290,9 +298,11 @@ export default function AddTransport() {
                   <TextInput value={seat} onChangeText={setSeat} placeholder="14A" style={s.input} placeholderTextColor={theme.colors.textMuted} />
                 </View>
               </View>
-              <Text style={s.label}>Check-in URL</Text>
+              <Text style={s.label}>Baggage allowance</Text>
+              <TextInput value={baggageInfo} onChangeText={setBaggageInfo} placeholder="1 carry-on + 1 checked 23kg" style={s.input} placeholderTextColor={theme.colors.textMuted} />
+              <Text style={s.label}>Check-in URL (optional)</Text>
               <TextInput value={checkinUrl} onChangeText={setCheckinUrl} placeholder="https://airline.com/check-in" style={s.input} placeholderTextColor={theme.colors.textMuted} autoCapitalize="none" />
-              <Text style={s.hint}>We&apos;ll remind you to check in 24 hours before departure.</Text>
+              <Text style={s.hint}>We&apos;ll remind you to check in 24 hours before departure. If left blank we&apos;ll auto-link based on the airline name.</Text>
             </>
           ) : null}
 
