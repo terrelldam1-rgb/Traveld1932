@@ -1,0 +1,506 @@
+import { Feather } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { api, formatApiError } from "../../../src/api";
+import { useAuth } from "../../../src/auth";
+import { theme } from "../../../src/theme";
+
+export default function HostDashboard() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const { user } = useAuth();
+  const [trip, setTrip] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [announcement, setAnnouncement] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [transportStatus, setTransportStatus] = useState<any>(null);
+  const [showExpense, setShowExpense] = useState(false);
+  const [expCat, setExpCat] = useState<string>("hotel");
+  const [expVendor, setExpVendor] = useState("");
+  const [expAmount, setExpAmount] = useState("");
+  const [expDate, setExpDate] = useState("");
+  const [expNote, setExpNote] = useState("");
+  const [busyExp, setBusyExp] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [s1, s2, s3] = await Promise.all([
+        api.get(`/trips/${id}/host-summary`),
+        api.get(`/trips/${id}/transport-status`),
+        api.get(`/trips/${id}/expenses`),
+      ]);
+      const tripData = s1.data;
+      tripData.expenses_recent = s3.data.items || [];
+      setTrip(tripData);
+      setTransportStatus(s2.data);
+    } catch (e) {
+      Alert.alert("Error", formatApiError(e));
+      router.back();
+    } finally {
+      setLoading(false);
+    }
+  }, [id, router]);
+
+  const addExpense = async () => {
+    if (!expVendor.trim() || !expAmount.trim()) {
+      Alert.alert("Missing info", "Vendor and amount are required.");
+      return;
+    }
+    setBusyExp(true);
+    try {
+      await api.post(`/trips/${id}/expenses`, {
+        amount: Number(expAmount),
+        category: expCat,
+        vendor: expVendor.trim(),
+        paid_on: expDate.trim() || null,
+        notes: expNote.trim() || null,
+      });
+      setExpVendor(""); setExpAmount(""); setExpDate(""); setExpNote("");
+      setShowExpense(false);
+      load();
+    } catch (e) {
+      Alert.alert("Error", formatApiError(e));
+    } finally {
+      setBusyExp(false);
+    }
+  };
+
+  const deleteExpense = (eid: string) => {
+    Alert.alert("Delete expense?", "This won't refund anyone — just removes the record.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.delete(`/trips/${id}/expenses/${eid}`);
+            load();
+          } catch (e) { Alert.alert("Error", formatApiError(e)); }
+        },
+      },
+    ]);
+  };
+
+  const requestPayout = () => {
+    const avail = trip?.available_balance || 0;
+    if (avail <= 0) {
+      Alert.alert("No funds available", "There are no available pool funds to request a payout for yet.");
+      return;
+    }
+    Alert.prompt?.(
+      "Request payout",
+      `Available: $${avail.toFixed(2)}.\nEnter amount in USD to request to your bank.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Request",
+          onPress: async (v?: string) => {
+            const amt = Number(v);
+            if (!amt || amt <= 0) return Alert.alert("Invalid amount");
+            try {
+              await api.post(`/trips/${id}/payout-request`, { amount: amt, method: "bank_transfer" });
+              Alert.alert("Request sent", "Admin has been notified — they'll process the bank transfer.");
+              load();
+            } catch (e) {
+              Alert.alert("Error", formatApiError(e));
+            }
+          },
+        },
+      ],
+      "plain-text",
+      String(avail)
+    );
+    // Fallback for Android (no Alert.prompt)
+    if (!Alert.prompt) {
+      Alert.alert("Request payout", "Use iOS to enter amount, or contact admin directly via support.");
+    }
+  };
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const regenerateCode = async () => {
+    Alert.alert("Regenerate code?", "The old code will stop working.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Regenerate",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            const { data } = await api.post(`/trips/${id}/regenerate-code`);
+            await Clipboard.setStringAsync(data.invite_code);
+            Alert.alert("New code", `${data.invite_code}\n\nCopied to clipboard.`);
+            load();
+          } catch (e) { Alert.alert("Error", formatApiError(e)); }
+        },
+      },
+    ]);
+  };
+
+  const removeMember = (m: any) => {
+    Alert.alert("Remove member?", `Remove ${m.name} from this trip?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.delete(`/trips/${id}/members/${m.id}`);
+            load();
+          } catch (e) { Alert.alert("Error", formatApiError(e)); }
+        },
+      },
+    ]);
+  };
+
+  const sendAnnouncement = async () => {
+    const text = announcement.trim();
+    if (!text) return;
+    setBusy(true);
+    try {
+      await api.post(`/trips/${id}/announcements`, { text });
+      setAnnouncement("");
+      Alert.alert("Posted!", "Your announcement is pinned to the trip chat.");
+    } catch (e) {
+      Alert.alert("Error", formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading || !trip) {
+    return <SafeAreaView style={s.safe}><ActivityIndicator color={theme.colors.primary} style={{ marginTop: 80 }} /></SafeAreaView>;
+  }
+
+  const members = trip.members_detail || [];
+  const totalPaidInFull = members.filter((m: any) => m.paid_in_full).length;
+
+  return (
+    <SafeAreaView style={s.safe} edges={["top", "bottom"]}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => router.back()} style={s.iconBtn}><Feather name="arrow-left" size={22} color={theme.colors.text} /></TouchableOpacity>
+          <View style={{ alignItems: "center" }}>
+            <Text style={s.title}>Host Dashboard</Text>
+            <Text style={s.subtitle}>{trip.name}</Text>
+          </View>
+          <View style={{ width: 44 }} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+          {/* Stats hero */}
+          <View style={s.hero}>
+            <Text style={s.heroLabel}>RAISED</Text>
+            <Text style={s.heroAmount}>${trip.total_raised.toFixed(2)}</Text>
+            <Text style={s.heroSub}>of ${trip.pool_goal.toFixed(0)} goal · {members.length}/{trip.max_members} travelers</Text>
+          </View>
+          <View style={s.statRow}>
+            <StatBox icon="check-circle" value={totalPaidInFull} label="Paid in full" />
+            <StatBox icon="clock" value={members.length - totalPaidInFull} label="Outstanding" />
+          </View>
+
+          {/* Invite code */}
+          <View style={s.card}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Feather name="key" size={16} color={theme.colors.primary} />
+              <Text style={s.cardTitle}>Invite code</Text>
+              <View style={{ flex: 1 }} />
+              <Text style={s.code}>{trip.invite_code}</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <TouchableOpacity
+                onPress={async () => { await Clipboard.setStringAsync(trip.invite_code); Alert.alert("Copied"); }}
+                style={s.outlineBtn}
+              >
+                <Feather name="copy" size={14} color={theme.colors.primary} />
+                <Text style={s.outlineBtnText}>Copy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={regenerateCode} style={s.outlineBtn} testID="regen-code">
+                <Feather name="refresh-cw" size={14} color={theme.colors.primary} />
+                <Text style={s.outlineBtnText}>Regenerate</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Announcement */}
+          <View style={s.card}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Feather name="radio" size={16} color={theme.colors.accent} />
+              <Text style={s.cardTitle}>Send announcement</Text>
+            </View>
+            <TextInput
+              value={announcement}
+              onChangeText={setAnnouncement}
+              placeholder="Heads up crew — meet in the lobby at 7pm..."
+              multiline
+              style={[s.input, { minHeight: 80, textAlignVertical: "top" }]}
+              placeholderTextColor={theme.colors.textMuted}
+              testID="announcement-input"
+            />
+            <TouchableOpacity onPress={sendAnnouncement} disabled={busy || !announcement.trim()} style={[s.primary, (busy || !announcement.trim()) && { opacity: 0.5 }]} testID="send-announcement">
+              {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryText}>Post to Trip Chat</Text>}
+            </TouchableOpacity>
+          </View>
+
+          {/* Members */}
+          <View style={s.card}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <Feather name="users" size={16} color={theme.colors.secondary} />
+              <Text style={s.cardTitle}>Members &amp; payments</Text>
+            </View>
+            {members.map((m: any) => (
+              <View key={m.id} style={s.memberRow}>
+                <View style={s.ava}>
+                  <Text style={s.avaText}>{(m.name?.[0] || "?").toUpperCase()}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                    <Text style={s.mName}>{m.name}</Text>
+                    {m.role === "host" ? <View style={s.hostTag}><Text style={s.hostTagText}>HOST</Text></View> : null}
+                    {m.paid_in_full ? <Feather name="check-circle" size={14} color={theme.colors.success} /> : null}
+                  </View>
+                  <Text style={s.muted}>
+                    ${m.contributed.toFixed(0)} of ${m.share.toFixed(0)}
+                    {m.remaining > 0 ? ` · -$${m.remaining.toFixed(0)}` : ""}
+                  </Text>
+                </View>
+                {m.role !== "host" ? (
+                  <TouchableOpacity onPress={() => removeMember(m)} style={s.removeBtn} testID={`remove-member-${m.id}`}>
+                    <Feather name="x" size={16} color="#B03A2E" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ))}
+          </View>
+
+          {/* Pool spending */}
+          <View style={s.card}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Feather name="dollar-sign" size={16} color={theme.colors.success} />
+              <Text style={s.cardTitle}>Pool spending</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+              <SpendBox label="Raised" value={trip.total_raised || 0} color={theme.colors.secondary} />
+              <SpendBox label="Spent" value={trip.total_spent || 0} color={theme.colors.accent} />
+              <SpendBox label="Available" value={trip.available_balance || 0} color={theme.colors.primary} />
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowExpense((x) => !x)}
+              style={[s.outlineBtn, { marginTop: 10, flex: undefined, alignSelf: "stretch" }]}
+              testID="toggle-expense-form"
+            >
+              <Feather name={showExpense ? "minus" : "plus"} size={14} color={theme.colors.primary} />
+              <Text style={s.outlineBtnText}>{showExpense ? "Hide" : "Log expense"}</Text>
+            </TouchableOpacity>
+            {showExpense ? (
+              <View style={{ marginTop: 8, gap: 6 }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {(["flight", "hotel", "transportation", "activities", "food", "other"] as const).map((c) => (
+                    <TouchableOpacity
+                      key={c}
+                      onPress={() => setExpCat(c)}
+                      style={[s.miniChip, expCat === c && s.miniChipOn]}
+                    >
+                      <Text style={[s.miniChipText, expCat === c && { color: "#fff" }]}>
+                        {c.charAt(0).toUpperCase() + c.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput
+                  value={expVendor}
+                  onChangeText={setExpVendor}
+                  placeholder="Vendor (e.g. Delta Airlines)"
+                  style={s.input}
+                  placeholderTextColor={theme.colors.textMuted}
+                />
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TextInput
+                    value={expAmount}
+                    onChangeText={setExpAmount}
+                    placeholder="Amount $"
+                    keyboardType="numeric"
+                    style={[s.input, { flex: 1 }]}
+                    placeholderTextColor={theme.colors.textMuted}
+                  />
+                  <TextInput
+                    value={expDate}
+                    onChangeText={setExpDate}
+                    placeholder="YYYY-MM-DD"
+                    style={[s.input, { flex: 1 }]}
+                    placeholderTextColor={theme.colors.textMuted}
+                  />
+                </View>
+                <TextInput
+                  value={expNote}
+                  onChangeText={setExpNote}
+                  placeholder="Notes (optional)"
+                  style={s.input}
+                  placeholderTextColor={theme.colors.textMuted}
+                />
+                <TouchableOpacity onPress={addExpense} disabled={busyExp} style={[s.primary, busyExp && { opacity: 0.7 }]}>
+                  {busyExp ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryText}>Save expense</Text>}
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {/* Recent expenses */}
+            {(trip.expenses_recent || []).slice(0, 5).map((e: any) => (
+              <View key={e.id} style={s.expRow}>
+                <View style={s.expCatBadge}>
+                  <Text style={s.expCatText}>{(e.category || "other").toUpperCase()}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.mName}>{e.vendor}</Text>
+                  <Text style={s.muted}>
+                    ${e.amount.toFixed(2)}
+                    {e.paid_on ? ` · ${e.paid_on}` : ""}
+                    {e.notes ? ` · ${e.notes}` : ""}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => deleteExpense(e.id)}>
+                  <Feather name="trash-2" size={14} color="#B03A2E" />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <TouchableOpacity onPress={requestPayout} style={[s.outlineBtn, { marginTop: 10, flex: undefined, alignSelf: "stretch", borderColor: theme.colors.accent }]}>
+              <Feather name="briefcase" size={14} color={theme.colors.accent} />
+              <Text style={[s.outlineBtnText, { color: theme.colors.accent }]}>Request payout to bank</Text>
+            </TouchableOpacity>
+            <Text style={s.muted}>Payout requests go to admin for processing (Stripe Connect coming soon).</Text>
+          </View>
+
+          {/* Transport status */}
+          {transportStatus ? (
+            <View style={s.card}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <Feather name="send" size={16} color={theme.colors.primary} />
+                <Text style={s.cardTitle}>Transportation status</Text>
+                <View style={{ flex: 1 }} />
+                <Text style={s.muted}>
+                  {transportStatus.submitted_count}/{transportStatus.members.length} submitted
+                </Text>
+              </View>
+              {transportStatus.missing_count > 0 ? (
+                <View style={s.warnBanner}>
+                  <Feather name="alert-circle" size={14} color="#B65A00" />
+                  <Text style={s.warnText}>
+                    {transportStatus.missing_count} traveler{transportStatus.missing_count === 1 ? "" : "s"} haven&apos;t added transport yet.
+                  </Text>
+                </View>
+              ) : (
+                <View style={s.okBanner}>
+                  <Feather name="check-circle" size={14} color={theme.colors.success} />
+                  <Text style={s.okText}>Everyone has submitted their transportation. ✈️</Text>
+                </View>
+              )}
+              {transportStatus.members.map((row: any) => (
+                <View key={row.user_id} style={s.memberRow}>
+                  <View style={[s.dot, { backgroundColor: row.has_transport ? theme.colors.success : "#E68A4A" }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.mName}>{row.name || row.email}</Text>
+                    <Text style={s.muted}>
+                      {row.has_transport
+                        ? `${row.transport_count} transport item${row.transport_count === 1 ? "" : "s"}`
+                        : "No transport added yet"}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={s.smallBtn}
+                    onPress={() => router.push(`/flight/add?trip_id=${id}&assignee=${row.user_id}`)}
+                    testID={`add-transport-for-${row.user_id}`}
+                  >
+                    <Feather name="plus" size={12} color={theme.colors.primary} />
+                    <Text style={s.smallBtnText}>{row.has_transport ? "Add" : "Add for them"}</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          <TouchableOpacity onPress={() => router.push(`/trip/${id}`)} style={s.outlineBtn}>
+            <Feather name="external-link" size={14} color={theme.colors.primary} />
+            <Text style={s.outlineBtnText}>View trip as member</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function StatBox({ icon, value, label }: { icon: any; value: number; label: string }) {
+  return (
+    <View style={s.statBox}>
+      <Feather name={icon} size={16} color={theme.colors.primary} />
+      <Text style={s.statValue}>{value}</Text>
+      <Text style={s.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function SpendBox({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <View style={[s.statBox, { borderTopWidth: 3, borderTopColor: color }]}>
+      <Text style={[s.statValue, { color }]}>${value.toFixed(0)}</Text>
+      <Text style={s.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: theme.colors.bg },
+  header: { flexDirection: "row", paddingHorizontal: 20, paddingTop: 12, alignItems: "center", justifyContent: "space-between" },
+  iconBtn: { width: 44, height: 44, borderRadius: 9999, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", borderWidth: 1, borderColor: theme.colors.border },
+  title: { fontSize: 18, fontWeight: "800", color: theme.colors.text },
+  subtitle: { fontSize: 12, color: theme.colors.primary, fontWeight: "700" },
+  hero: { backgroundColor: theme.colors.primary, borderRadius: 24, padding: 20, alignItems: "center" },
+  heroLabel: { color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  heroAmount: { color: "#fff", fontSize: 34, fontWeight: "800", letterSpacing: -1, marginTop: 4 },
+  heroSub: { color: "rgba(255,255,255,0.9)", fontSize: 12, marginTop: 4 },
+  statRow: { flexDirection: "row", gap: 10 },
+  statBox: { flex: 1, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border, padding: 14, alignItems: "center", gap: 4 },
+  statValue: { fontSize: 20, fontWeight: "800", color: theme.colors.text },
+  statLabel: { fontSize: 10, fontWeight: "700", color: theme.colors.textMuted, letterSpacing: 1 },
+  card: { backgroundColor: "#fff", borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border, padding: 16, gap: 8 },
+  cardTitle: { fontSize: 14, fontWeight: "800", color: theme.colors.text },
+  code: { fontSize: 20, fontWeight: "800", color: theme.colors.primary, letterSpacing: 3 },
+  outlineBtn: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingVertical: 12, paddingHorizontal: 14, borderRadius: 9999, borderWidth: 1, borderColor: theme.colors.primary, backgroundColor: "#fff", flex: 1 },
+  outlineBtnText: { color: theme.colors.primary, fontWeight: "700", fontSize: 13 },
+  input: { backgroundColor: theme.colors.surfaceMuted, borderRadius: 14, padding: 12, fontSize: 14, color: theme.colors.text, marginTop: 4 },
+  primary: { backgroundColor: theme.colors.primary, paddingVertical: 14, borderRadius: 9999, alignItems: "center", marginTop: 8 },
+  primaryText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  memberRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  ava: { width: 36, height: 36, borderRadius: 9999, backgroundColor: theme.colors.primary, alignItems: "center", justifyContent: "center" },
+  avaText: { color: "#fff", fontWeight: "800" },
+  mName: { fontSize: 14, fontWeight: "700", color: theme.colors.text },
+  muted: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
+  hostTag: { backgroundColor: theme.colors.surfaceHighlight, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 9999 },
+  hostTagText: { fontSize: 9, fontWeight: "800", color: theme.colors.primary, letterSpacing: 1 },
+  removeBtn: { width: 32, height: 32, borderRadius: 9999, alignItems: "center", justifyContent: "center", backgroundColor: "#FDECEA" },
+  warnBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FFF4E5", borderRadius: 12, padding: 10, marginVertical: 6 },
+  warnText: { color: "#B65A00", fontSize: 12, fontWeight: "700", flex: 1 },
+  okBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#E6F7F2", borderRadius: 12, padding: 10, marginVertical: 6 },
+  okText: { color: "#0E8A6F", fontSize: 12, fontWeight: "700", flex: 1 },
+  dot: { width: 10, height: 10, borderRadius: 9999, marginRight: 6 },
+  smallBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 9999, borderWidth: 1, borderColor: theme.colors.primary, backgroundColor: "#fff" },
+  smallBtnText: { color: theme.colors.primary, fontWeight: "700", fontSize: 11 },
+  miniChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 9999, backgroundColor: "#fff", borderWidth: 1, borderColor: theme.colors.border },
+  miniChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  miniChipText: { fontSize: 11, fontWeight: "700", color: theme.colors.secondary },
+  expRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  expCatBadge: { paddingVertical: 3, paddingHorizontal: 8, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight },
+  expCatText: { fontSize: 9, fontWeight: "800", color: theme.colors.primary, letterSpacing: 0.6 },
+});
