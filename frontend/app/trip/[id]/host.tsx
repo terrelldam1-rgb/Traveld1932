@@ -28,14 +28,24 @@ export default function HostDashboard() {
   const [announcement, setAnnouncement] = useState("");
   const [busy, setBusy] = useState(false);
   const [transportStatus, setTransportStatus] = useState<any>(null);
+  const [showExpense, setShowExpense] = useState(false);
+  const [expCat, setExpCat] = useState<string>("hotel");
+  const [expVendor, setExpVendor] = useState("");
+  const [expAmount, setExpAmount] = useState("");
+  const [expDate, setExpDate] = useState("");
+  const [expNote, setExpNote] = useState("");
+  const [busyExp, setBusyExp] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [s1, s2] = await Promise.all([
+      const [s1, s2, s3] = await Promise.all([
         api.get(`/trips/${id}/host-summary`),
         api.get(`/trips/${id}/transport-status`),
+        api.get(`/trips/${id}/expenses`),
       ]);
-      setTrip(s1.data);
+      const tripData = s1.data;
+      tripData.expenses_recent = s3.data.items || [];
+      setTrip(tripData);
       setTransportStatus(s2.data);
     } catch (e) {
       Alert.alert("Error", formatApiError(e));
@@ -44,6 +54,81 @@ export default function HostDashboard() {
       setLoading(false);
     }
   }, [id, router]);
+
+  const addExpense = async () => {
+    if (!expVendor.trim() || !expAmount.trim()) {
+      Alert.alert("Missing info", "Vendor and amount are required.");
+      return;
+    }
+    setBusyExp(true);
+    try {
+      await api.post(`/trips/${id}/expenses`, {
+        amount: Number(expAmount),
+        category: expCat,
+        vendor: expVendor.trim(),
+        paid_on: expDate.trim() || null,
+        notes: expNote.trim() || null,
+      });
+      setExpVendor(""); setExpAmount(""); setExpDate(""); setExpNote("");
+      setShowExpense(false);
+      load();
+    } catch (e) {
+      Alert.alert("Error", formatApiError(e));
+    } finally {
+      setBusyExp(false);
+    }
+  };
+
+  const deleteExpense = (eid: string) => {
+    Alert.alert("Delete expense?", "This won't refund anyone — just removes the record.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.delete(`/trips/${id}/expenses/${eid}`);
+            load();
+          } catch (e) { Alert.alert("Error", formatApiError(e)); }
+        },
+      },
+    ]);
+  };
+
+  const requestPayout = () => {
+    const avail = trip?.available_balance || 0;
+    if (avail <= 0) {
+      Alert.alert("No funds available", "There are no available pool funds to request a payout for yet.");
+      return;
+    }
+    Alert.prompt?.(
+      "Request payout",
+      `Available: $${avail.toFixed(2)}.\nEnter amount in USD to request to your bank.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Request",
+          onPress: async (v?: string) => {
+            const amt = Number(v);
+            if (!amt || amt <= 0) return Alert.alert("Invalid amount");
+            try {
+              await api.post(`/trips/${id}/payout-request`, { amount: amt, method: "bank_transfer" });
+              Alert.alert("Request sent", "Admin has been notified — they'll process the bank transfer.");
+              load();
+            } catch (e) {
+              Alert.alert("Error", formatApiError(e));
+            }
+          },
+        },
+      ],
+      "plain-text",
+      String(avail)
+    );
+    // Fallback for Android (no Alert.prompt)
+    if (!Alert.prompt) {
+      Alert.alert("Request payout", "Use iOS to enter amount, or contact admin directly via support.");
+    }
+  };
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -200,6 +285,104 @@ export default function HostDashboard() {
             ))}
           </View>
 
+          {/* Pool spending */}
+          <View style={s.card}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Feather name="dollar-sign" size={16} color={theme.colors.success} />
+              <Text style={s.cardTitle}>Pool spending</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+              <SpendBox label="Raised" value={trip.total_raised || 0} color={theme.colors.secondary} />
+              <SpendBox label="Spent" value={trip.total_spent || 0} color={theme.colors.accent} />
+              <SpendBox label="Available" value={trip.available_balance || 0} color={theme.colors.primary} />
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowExpense((x) => !x)}
+              style={[s.outlineBtn, { marginTop: 10, flex: undefined, alignSelf: "stretch" }]}
+              testID="toggle-expense-form"
+            >
+              <Feather name={showExpense ? "minus" : "plus"} size={14} color={theme.colors.primary} />
+              <Text style={s.outlineBtnText}>{showExpense ? "Hide" : "Log expense"}</Text>
+            </TouchableOpacity>
+            {showExpense ? (
+              <View style={{ marginTop: 8, gap: 6 }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {(["flight", "hotel", "transportation", "activities", "food", "other"] as const).map((c) => (
+                    <TouchableOpacity
+                      key={c}
+                      onPress={() => setExpCat(c)}
+                      style={[s.miniChip, expCat === c && s.miniChipOn]}
+                    >
+                      <Text style={[s.miniChipText, expCat === c && { color: "#fff" }]}>
+                        {c.charAt(0).toUpperCase() + c.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput
+                  value={expVendor}
+                  onChangeText={setExpVendor}
+                  placeholder="Vendor (e.g. Delta Airlines)"
+                  style={s.input}
+                  placeholderTextColor={theme.colors.textMuted}
+                />
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TextInput
+                    value={expAmount}
+                    onChangeText={setExpAmount}
+                    placeholder="Amount $"
+                    keyboardType="numeric"
+                    style={[s.input, { flex: 1 }]}
+                    placeholderTextColor={theme.colors.textMuted}
+                  />
+                  <TextInput
+                    value={expDate}
+                    onChangeText={setExpDate}
+                    placeholder="YYYY-MM-DD"
+                    style={[s.input, { flex: 1 }]}
+                    placeholderTextColor={theme.colors.textMuted}
+                  />
+                </View>
+                <TextInput
+                  value={expNote}
+                  onChangeText={setExpNote}
+                  placeholder="Notes (optional)"
+                  style={s.input}
+                  placeholderTextColor={theme.colors.textMuted}
+                />
+                <TouchableOpacity onPress={addExpense} disabled={busyExp} style={[s.primary, busyExp && { opacity: 0.7 }]}>
+                  {busyExp ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryText}>Save expense</Text>}
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {/* Recent expenses */}
+            {(trip.expenses_recent || []).slice(0, 5).map((e: any) => (
+              <View key={e.id} style={s.expRow}>
+                <View style={s.expCatBadge}>
+                  <Text style={s.expCatText}>{(e.category || "other").toUpperCase()}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.mName}>{e.vendor}</Text>
+                  <Text style={s.muted}>
+                    ${e.amount.toFixed(2)}
+                    {e.paid_on ? ` · ${e.paid_on}` : ""}
+                    {e.notes ? ` · ${e.notes}` : ""}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => deleteExpense(e.id)}>
+                  <Feather name="trash-2" size={14} color="#B03A2E" />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <TouchableOpacity onPress={requestPayout} style={[s.outlineBtn, { marginTop: 10, flex: undefined, alignSelf: "stretch", borderColor: theme.colors.accent }]}>
+              <Feather name="briefcase" size={14} color={theme.colors.accent} />
+              <Text style={[s.outlineBtnText, { color: theme.colors.accent }]}>Request payout to bank</Text>
+            </TouchableOpacity>
+            <Text style={s.muted}>Payout requests go to admin for processing (Stripe Connect coming soon).</Text>
+          </View>
+
           {/* Transport status */}
           {transportStatus ? (
             <View style={s.card}>
@@ -268,6 +451,15 @@ function StatBox({ icon, value, label }: { icon: any; value: number; label: stri
   );
 }
 
+function SpendBox({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <View style={[s.statBox, { borderTopWidth: 3, borderTopColor: color }]}>
+      <Text style={[s.statValue, { color }]}>${value.toFixed(0)}</Text>
+      <Text style={s.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   header: { flexDirection: "row", paddingHorizontal: 20, paddingTop: 12, alignItems: "center", justifyContent: "space-between" },
@@ -305,4 +497,10 @@ const s = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 9999, marginRight: 6 },
   smallBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 9999, borderWidth: 1, borderColor: theme.colors.primary, backgroundColor: "#fff" },
   smallBtnText: { color: theme.colors.primary, fontWeight: "700", fontSize: 11 },
+  miniChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 9999, backgroundColor: "#fff", borderWidth: 1, borderColor: theme.colors.border },
+  miniChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  miniChipText: { fontSize: 11, fontWeight: "700", color: theme.colors.secondary },
+  expRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  expCatBadge: { paddingVertical: 3, paddingHorizontal: 8, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight },
+  expCatText: { fontSize: 9, fontWeight: "800", color: theme.colors.primary, letterSpacing: 0.6 },
 });

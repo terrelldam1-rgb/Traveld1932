@@ -5,8 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   ImageBackground,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -182,6 +184,73 @@ export default function TripDetail() {
       <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 160, gap: 16 }}>
         {tab === "pool" && (
           <>
+            {/* Host card */}
+            {trip.host ? (
+              <View style={s.hostCard}>
+                {trip.host.avatar_url ? (
+                  <Image source={{ uri: trip.host.avatar_url }} style={s.hostAvatar} />
+                ) : (
+                  <View style={[s.hostAvatar, s.hostAvatarFallback]}>
+                    <Text style={s.hostInitial}>{(trip.host.name?.[0] || "?").toUpperCase()}</Text>
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={s.hostLabel}>HOSTED BY</Text>
+                  <Text style={s.hostName}>{trip.host.name}</Text>
+                  {trip.host.preferred_contact !== "hidden" && trip.host.contact_value ? (
+                    <TouchableOpacity
+                      onPress={async () => {
+                        const v = trip.host.contact_value as string;
+                        const url = trip.host.preferred_contact === "phone"
+                          ? `tel:${v.replace(/[^+\d]/g, "")}`
+                          : `mailto:${v}`;
+                        try { await Linking.openURL(url); } catch {}
+                      }}
+                      style={s.hostContactRow}
+                    >
+                      <Feather
+                        name={trip.host.preferred_contact === "phone" ? "phone" : "mail"}
+                        size={13}
+                        color={theme.colors.primary}
+                      />
+                      <Text style={s.hostContactText}>{trip.host.contact_value}</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {(trip.host.instagram || trip.host.tiktok || trip.host.twitter) ? (
+                    <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
+                      {trip.host.instagram ? (
+                        <TouchableOpacity
+                          onPress={() => Linking.openURL(`https://instagram.com/${trip.host.instagram}`)}
+                          style={s.socialChip}
+                        >
+                          <Feather name="instagram" size={12} color={theme.colors.primary} />
+                          <Text style={s.socialText}>@{trip.host.instagram}</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {trip.host.tiktok ? (
+                        <TouchableOpacity
+                          onPress={() => Linking.openURL(`https://tiktok.com/@${trip.host.tiktok}`)}
+                          style={s.socialChip}
+                        >
+                          <Feather name="music" size={12} color={theme.colors.primary} />
+                          <Text style={s.socialText}>@{trip.host.tiktok}</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {trip.host.twitter ? (
+                        <TouchableOpacity
+                          onPress={() => Linking.openURL(`https://x.com/${trip.host.twitter}`)}
+                          style={s.socialChip}
+                        >
+                          <Feather name="twitter" size={12} color={theme.colors.primary} />
+                          <Text style={s.socialText}>@{trip.host.twitter}</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
+
             {/* About / details card */}
             {(trip.description || trip.lodging || (trip.itinerary && trip.itinerary.length > 0) || (trip.tags && trip.tags.length > 0)) ? (
               <View style={s.aboutCard}>
@@ -563,4 +632,14 @@ const s = StyleSheet.create({
   dayChipText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
   dayTitle: { fontSize: 14, fontWeight: "700", color: theme.colors.text },
   dayDetails: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2, lineHeight: 17 },
+  hostCard: { flexDirection: "row", gap: 14, alignItems: "center", backgroundColor: "#fff", borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border, padding: 16 },
+  hostAvatar: { width: 64, height: 64, borderRadius: 9999, borderWidth: 2, borderColor: theme.colors.primary },
+  hostAvatarFallback: { backgroundColor: theme.colors.surfaceHighlight, alignItems: "center", justifyContent: "center" },
+  hostInitial: { fontSize: 24, fontWeight: "800", color: theme.colors.primary },
+  hostLabel: { fontSize: 10, fontWeight: "800", color: theme.colors.textMuted, letterSpacing: 1.2 },
+  hostName: { fontSize: 17, fontWeight: "800", color: theme.colors.text, marginTop: 2 },
+  hostContactRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6, paddingVertical: 4, paddingHorizontal: 10, backgroundColor: theme.colors.surfaceHighlight, borderRadius: 9999, alignSelf: "flex-start" },
+  hostContactText: { fontSize: 12, fontWeight: "700", color: theme.colors.primary },
+  socialChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 9999, backgroundColor: theme.colors.surfaceMuted },
+  socialText: { fontSize: 11, color: theme.colors.primary, fontWeight: "600" },
 });

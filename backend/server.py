@@ -113,6 +113,31 @@ def public_user(u: dict) -> dict:
         "role": u.get("role", "user"),
         "phone": u.get("phone"),
         "emergency_contact": u.get("emergency_contact"),
+        "preferred_contact": u.get("preferred_contact", "email"),
+        "instagram": u.get("instagram"),
+        "tiktok": u.get("tiktok"),
+        "twitter": u.get("twitter"),
+    }
+
+
+def host_card(u: dict) -> dict:
+    """Public-facing host info shown on a trip detail page (respects preferred_contact)."""
+    pref = u.get("preferred_contact", "email")
+    contact_value = None
+    if pref == "phone":
+        contact_value = u.get("phone")
+    elif pref == "email":
+        contact_value = u.get("email")
+    # if pref == hidden → contact_value stays None
+    return {
+        "id": u["id"],
+        "name": u.get("name", ""),
+        "avatar_url": u.get("avatar_url"),
+        "preferred_contact": pref,
+        "contact_value": contact_value,
+        "instagram": u.get("instagram"),
+        "tiktok": u.get("tiktok"),
+        "twitter": u.get("twitter"),
     }
 
 
@@ -180,6 +205,25 @@ class ProfileUpdate(BaseModel):
     phone: Optional[str] = None
     avatar_url: Optional[str] = None
     emergency_contact: Optional[str] = None
+    preferred_contact: Optional[Literal["email", "phone", "hidden"]] = None
+    instagram: Optional[str] = None
+    tiktok: Optional[str] = None
+    twitter: Optional[str] = None
+
+
+class TripExpenseCreate(BaseModel):
+    amount: float = Field(gt=0)
+    category: Literal["flight", "hotel", "transportation", "activities", "food", "other"] = "other"
+    vendor: str = Field(min_length=1, max_length=120)
+    paid_on: Optional[str] = None  # YYYY-MM-DD
+    notes: Optional[str] = None
+    receipt_image: Optional[str] = None  # base64 data URL (optional)
+
+
+class PayoutRequestReq(BaseModel):
+    amount: float = Field(gt=0)
+    method: Literal["bank_transfer", "stripe_connect", "other"] = "bank_transfer"
+    notes: Optional[str] = None
 
 
 class CheckoutFullReq(BaseModel):
@@ -492,6 +536,98 @@ async def submit_support(body: SupportReq, user: dict = Depends(get_current_user
     return req
 
 
+# ============ Trip Expenses (Pool spending tracker) ============
+async def _require_host_or_admin(trip_id: str, user: dict) -> dict:
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    is_host = trip["host_id"] == user["id"]
+    is_admin = user.get("role") == "admin"
+    if not (is_host or is_admin):
+        raise HTTPException(status_code=403, detail="Only host or admin")
+    return trip
+
+
+@api.post("/trips/{trip_id}/expenses")
+async def add_expense(trip_id: str, body: TripExpenseCreate, user: dict = Depends(get_current_user)):
+    await _require_host_or_admin(trip_id, user)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "trip_id": trip_id,
+        "host_id": user["id"],
+        "amount": float(body.amount),
+        "category": body.category,
+        "vendor": body.vendor.strip(),
+        "paid_on": body.paid_on,
+        "notes": (body.notes or "").strip() or None,
+        "receipt_image": body.receipt_image,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.trip_expenses.insert_one(doc)
+    doc.pop("_id", None)
+    # Mirror to chat as a host announcement
+    try:
+        await db.trip_messages.insert_one({
+            "id": str(uuid.uuid4()),
+            "trip_id": trip_id,
+            "user_id": user["id"],
+            "user_name": user.get("name"),
+            "text": f"💳 Pool spent ${doc['amount']:.2f} on {doc['vendor']} ({doc['category']}).",
+            "is_announcement": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+    return doc
+
+
+@api.get("/trips/{trip_id}/expenses")
+async def list_expenses(trip_id: str, user: dict = Depends(get_current_user)):
+    await _trip_for_user(trip_id, user["id"])
+    items = await db.trip_expenses.find({"trip_id": trip_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total = round(sum(float(i.get("amount") or 0.0) for i in items), 2)
+    return {"items": items, "total_spent": total}
+
+
+@api.delete("/trips/{trip_id}/expenses/{expense_id}")
+async def delete_expense(trip_id: str, expense_id: str, user: dict = Depends(get_current_user)):
+    await _require_host_or_admin(trip_id, user)
+    res = await db.trip_expenses.delete_one({"id": expense_id, "trip_id": trip_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return {"ok": True}
+
+
+@api.post("/trips/{trip_id}/payout-request")
+async def request_payout(trip_id: str, body: PayoutRequestReq, user: dict = Depends(get_current_user)):
+    """Stub: host requests pool payout. Stored in admin inbox for manual processing.
+    Future: replace with Stripe Connect destination payout."""
+    trip = await _require_host_or_admin(trip_id, user)
+    # Validate available balance
+    txns = await db.payment_transactions.find({"trip_id": trip_id, "payment_status": "paid"}, {"_id": 0}).to_list(1000)
+    raised = sum(t.get("amount") or 0.0 for t in txns)
+    exps = await db.trip_expenses.find({"trip_id": trip_id}, {"_id": 0}).to_list(1000)
+    spent = sum(float(e.get("amount") or 0.0) for e in exps)
+    available = round(raised - spent, 2)
+    if body.amount > available + 0.01:
+        raise HTTPException(status_code=400, detail=f"Requested ${body.amount:.2f} exceeds available ${available:.2f}")
+    req = {
+        "id": str(uuid.uuid4()),
+        "type": "payout",
+        "from_user_id": user["id"],
+        "from_name": user.get("name"),
+        "from_email": user["email"],
+        "trip_id": trip_id,
+        "trip_name": trip.get("name"),
+        "amount": float(body.amount),
+        "method": body.method,
+        "notes": (body.notes or "").strip() or None,
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_requests.insert_one(req)
+    req.pop("_id", None)
+    return req
 
 
 # ============ Trips ============
@@ -557,6 +693,21 @@ async def _enrich_trip(trip: dict) -> dict:
         m["share"] = share
         m["remaining"] = round(max(0.0, share - m["contributed"]), 2)
         m["paid_in_full"] = share > 0 and m["contributed"] >= share
+
+    # Host card with preferred contact info
+    host_doc = await db.users.find_one({"id": trip["host_id"]}, {"_id": 0, "password_hash": 0})
+    trip["host"] = host_card(host_doc) if host_doc else None
+
+    # Trip pool spending
+    expenses = await db.trip_expenses.find({"trip_id": trip["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total_spent = round(sum(float(e.get("amount") or 0.0) for e in expenses), 2)
+    spent_by_category: dict = {}
+    for e in expenses:
+        c = e.get("category", "other")
+        spent_by_category[c] = round(spent_by_category.get(c, 0.0) + float(e.get("amount") or 0.0), 2)
+    trip["total_spent"] = total_spent
+    trip["spent_by_category"] = spent_by_category
+    trip["available_balance"] = round(trip["total_raised"] - total_spent, 2)
     return trip
 
 
