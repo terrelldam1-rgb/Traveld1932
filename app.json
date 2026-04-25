@@ -59,9 +59,11 @@
       "typedRoutes": true
     },
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "REPLACE-WITH-EAS-PROJECT-ID-AFTER-eas-init"
+        "projectId": "11cf571b-ef02-4c05-bbff-cc5177292909"
       }
-    }
+    },
+    "owner": "terrelldam1"
   }
 }
