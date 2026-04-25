@@ -639,10 +639,23 @@ async def get_trip(trip_id: str, user: dict = Depends(get_current_user)):
 
 @api.patch("/trips/{trip_id}")
 async def update_trip(trip_id: str, body: TripUpdate, user: dict = Depends(get_current_user)):
-    trip = await _trip_for_user(trip_id, user["id"])
-    if trip["host_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="Only host can update")
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    is_host = trip["host_id"] == user["id"]
+    is_admin = user.get("role") == "admin"
+    if not (is_host or is_admin):
+        raise HTTPException(status_code=403, detail="Only host or admin can update")
     updates = {k: v for k, v in body.dict().items() if v is not None}
+    # Only admins may set is_public, tags, or featured
+    if not is_admin:
+        for k in ("is_public", "tags", "featured"):
+            updates.pop(k, None)
+    if "max_members" in updates:
+        try:
+            updates["max_members"] = max(1, min(15, int(updates["max_members"])))
+        except Exception:
+            updates.pop("max_members", None)
     if updates:
         await db.trips.update_one({"id": trip_id}, {"$set": updates})
     updated = await db.trips.find_one({"id": trip_id}, {"_id": 0})

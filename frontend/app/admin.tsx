@@ -25,6 +25,21 @@ type Stats = {
   paid_transactions: number;
 };
 
+const ADMIN_CATEGORIES: { id: string; label: string }[] = [
+  { id: "fine_dine", label: "Fine Dine" },
+  { id: "party", label: "Party" },
+  { id: "relax", label: "Relax" },
+  { id: "cultural", label: "Cultural" },
+  { id: "quick_turn", label: "Quick Turn" },
+  { id: "birthday", label: "Birthday" },
+  { id: "guided", label: "Guided" },
+  { id: "unguided", label: "Unguided" },
+  { id: "adventure", label: "Adventure" },
+  { id: "beach", label: "Beach" },
+  { id: "city", label: "City Break" },
+  { id: "wellness", label: "Wellness" },
+];
+
 export default function AdminDashboard() {
   const router = useRouter();
   const { user } = useAuth();
@@ -189,6 +204,49 @@ export default function AdminDashboard() {
                     <Text style={[s.adminActionText, { color: "#B03A2E" }]}>Delete</Text>
                   </TouchableOpacity>
                 </View>
+
+                {/* Public toggle + categories — admin curation */}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await api.patch(`/trips/${item.id}`, { is_public: !item.is_public });
+                        load();
+                      } catch (e) { Alert.alert("Error", formatApiError(e)); }
+                    }}
+                    style={[s.adminAction, item.is_public && { backgroundColor: theme.colors.primary }]}
+                    testID={`public-${item.id}`}
+                  >
+                    <Feather name="globe" size={12} color={item.is_public ? "#fff" : theme.colors.primary} />
+                    <Text style={[s.adminActionText, item.is_public && { color: "#fff" }]}>
+                      {item.is_public ? "Public" : "Make Public"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={[s.muted, { marginTop: 8, marginBottom: 4 }]}>Categories — tap to toggle:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                  {ADMIN_CATEGORIES.map((c) => {
+                    const on = (item.tags || []).includes(c.id);
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        onPress={async () => {
+                          const next = on
+                            ? (item.tags || []).filter((x: string) => x !== c.id)
+                            : [...(item.tags || []), c.id];
+                          try {
+                            await api.patch(`/trips/${item.id}`, { tags: next });
+                            load();
+                          } catch (e) { Alert.alert("Error", formatApiError(e)); }
+                        }}
+                        style={[s.tagChip, on && s.tagChipOn]}
+                        testID={`tag-${item.id}-${c.id}`}
+                      >
+                        <Text style={[s.tagChipText, on && { color: "#fff" }]}>{c.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
               <View style={{ alignItems: "flex-end" }}>
                 <Text style={s.rowAmt}>${item.total_raised.toFixed(0)}</Text>
@@ -352,4 +410,7 @@ const s = StyleSheet.create({
   resolveBtn: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 14, borderRadius: 9999, backgroundColor: theme.colors.surfaceHighlight, marginTop: 4 },
   resolveText: { color: theme.colors.primary, fontWeight: "700", fontSize: 12 },
   err: { color: "#B03A2E", paddingHorizontal: 20 },
+  tagChip: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 9999, backgroundColor: "#fff", borderWidth: 1, borderColor: theme.colors.border },
+  tagChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  tagChipText: { fontSize: 11, fontWeight: "700", color: theme.colors.secondary },
 });

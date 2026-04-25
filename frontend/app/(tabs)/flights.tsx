@@ -71,7 +71,7 @@ export default function Flights() {
   return (
     <SafeAreaView style={s.safe} edges={["top"]}>
       <View style={s.header}>
-        <Text style={s.title}>Flights</Text>
+        <Text style={s.title}>Transportation</Text>
         <TouchableOpacity
           testID="add-flight-btn"
           onPress={() => router.push("/flight/add")}
@@ -90,12 +90,24 @@ export default function Flights() {
           const h = hoursUntil(item.departure_time);
           const inWindow = h > 0 && h <= 24;
           const past = h < 0;
+          const tType = item.transport_type || "flight";
+          const TYPE_META: Record<string, { icon: string; label: string }> = {
+            flight: { icon: "send", label: "Flight" },
+            train: { icon: "git-commit", label: "Train" },
+            bus: { icon: "truck", label: "Bus" },
+            ferry: { icon: "anchor", label: "Ferry" },
+            car: { icon: "navigation", label: "Car Rental" },
+            shuttle: { icon: "users", label: "Shuttle" },
+            rideshare: { icon: "smartphone", label: "Rideshare" },
+            other: { icon: "more-horizontal", label: "Other" },
+          };
+          const meta = TYPE_META[tType] || TYPE_META.other;
           return (
             <View style={s.card}>
               <View style={s.cardTop}>
                 <View style={s.airlineBadge}>
-                  <Feather name="send" size={14} color={theme.colors.primary} />
-                  <Text style={s.airlineText}>{item.airline}</Text>
+                  <Feather name={meta.icon as any} size={14} color={theme.colors.primary} />
+                  <Text style={s.airlineText}>{meta.label.toUpperCase()} · {item.airline}</Text>
                 </View>
                 <Text style={s.flightNo}>{item.flight_number}</Text>
                 <TouchableOpacity onPress={() => remove(item.id, item.reminder_id)}>
@@ -118,21 +130,28 @@ export default function Flights() {
                   <View style={[s.badge, { backgroundColor: theme.colors.surfaceMuted }]}>
                     <Text style={[s.badgeText, { color: theme.colors.textMuted }]}>Completed</Text>
                   </View>
-                ) : inWindow ? (
+                ) : tType === "flight" && inWindow ? (
                   <View style={[s.badge, { backgroundColor: theme.colors.primary }]}>
                     <Feather name="bell" size={12} color="#fff" />
                     <Text style={[s.badgeText, { color: "#fff" }]}>CHECK IN NOW</Text>
                   </View>
-                ) : (
+                ) : tType === "flight" ? (
                   <View style={[s.badge, { backgroundColor: theme.colors.surfaceHighlight }]}>
                     <Feather name="clock" size={12} color={theme.colors.primary} />
                     <Text style={[s.badgeText, { color: theme.colors.primary }]}>
                       Reminder in {Math.max(0, h - 24)}h
                     </Text>
                   </View>
+                ) : (
+                  <View style={[s.badge, { backgroundColor: theme.colors.surfaceHighlight }]}>
+                    <Feather name="calendar" size={12} color={theme.colors.primary} />
+                    <Text style={[s.badgeText, { color: theme.colors.primary }]}>
+                      {h > 0 ? `In ${h}h` : "Departed"}
+                    </Text>
+                  </View>
                 )}
                 {item.confirmation_number ? (
-                  <Text style={s.conf}>PNR · {item.confirmation_number}</Text>
+                  <Text style={s.conf}>{tType === "car" ? "RES" : "PNR"} · {item.confirmation_number}</Text>
                 ) : null}
               </View>
             </View>
@@ -142,10 +161,10 @@ export default function Flights() {
           !loading ? (
             <View style={s.empty}>
               <Image source={{ uri: IMAGES.flightsEmpty }} style={s.emptyImg} />
-              <Text style={s.emptyTitle}>No flights saved</Text>
-              <Text style={s.emptySub}>Add a flight to get a 24-hour check-in reminder.</Text>
+              <Text style={s.emptyTitle}>No transportation saved</Text>
+              <Text style={s.emptySub}>Add a flight, train, bus or rental — we&apos;ll remind you 24h before departure.</Text>
               <TouchableOpacity style={s.primary} onPress={() => router.push("/flight/add")}>
-                <Text style={s.primaryText}>Add Flight</Text>
+                <Text style={s.primaryText}>Add Transportation</Text>
               </TouchableOpacity>
             </View>
           ) : null
