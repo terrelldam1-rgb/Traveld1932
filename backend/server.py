@@ -1071,7 +1071,8 @@ async def get_pool_balance(trip_id: str, user: dict = Depends(get_current_user))
     expenses = await db.trip_expenses.find({"trip_id": trip_id}, {"_id": 0}).to_list(1000)
     gross = round(sum(t.get("amount") or 0.0 for t in txns), 2)
     spent = round(sum(float(e.get("amount") or 0.0) for e in expenses), 2)
-    platform_fee = round(gross * 0.05, 2)
+    is_traveld_trip = trip.get("is_public", False)
+    platform_fee = round(gross * 0.05, 2) if is_traveld_trip else 0.0
     available = round(max(0.0, gross - spent - platform_fee), 2)
     withdrawals = await db.pool_withdrawals.find(
         {"trip_id": trip_id}, {"_id": 0}
@@ -1082,7 +1083,7 @@ async def get_pool_balance(trip_id: str, user: dict = Depends(get_current_user))
         "total_spent": spent,
         "platform_fee": platform_fee,
         "available": available,
-        "is_traveld_trip": trip.get("is_public", False),
+        "is_traveld_trip": is_traveld_trip,
         "is_honeymoon": trip.get("trip_type") == "honeymoon",
         "payout_recipient_id": trip.get("host_id"),
         "withdrawals": withdrawals,
@@ -1104,7 +1105,7 @@ async def withdraw_from_pool(trip_id: str, body: PoolWithdrawReq, user: dict = D
     expenses = await db.trip_expenses.find({"trip_id": trip_id}, {"_id": 0}).to_list(1000)
     gross = sum(t.get("amount") or 0.0 for t in txns)
     spent = sum(float(e.get("amount") or 0.0) for e in expenses)
-    platform_fee = round(gross * 0.05, 2)
+    platform_fee = round(gross * 0.05, 2) if trip.get("is_public", False) else 0.0
     available = round(gross - spent - platform_fee, 2)
     if body.amount > available + 0.01:
         raise HTTPException(status_code=400, detail=f"Requested ${body.amount:.2f} exceeds available ${available:.2f}")
