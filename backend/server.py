@@ -1062,6 +1062,81 @@ def _stripe(origin_url: str) -> StripeCheckout:
     return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
 
 
+@api.get("/trips/{trip_id}/pool-balance")
+async def get_pool_balance(trip_id: str, user: dict = Depends(get_current_user)):
+    trip = await _require_host_or_admin(trip_id, user)
+    txns = await db.payment_transactions.find(
+        {"trip_id": trip_id, "payment_status": "paid"}, {"_id": 0}
+    ).to_list(1000)
+    expenses = await db.trip_expenses.find({"trip_id": trip_id}, {"_id": 0}).to_list(1000)
+    gross = round(sum(t.get("amount") or 0.0 for t in txns), 2)
+    spent = round(sum(float(e.get("amount") or 0.0) for e in expenses), 2)
+    platform_fee = round(gross * 0.05, 2)
+    available = round(max(0.0, gross - spent - platform_fee), 2)
+    withdrawals = await db.pool_withdrawals.find(
+        {"trip_id": trip_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+    return {
+        "trip_id": trip_id,
+        "gross_collected": gross,
+        "total_spent": spent,
+        "platform_fee": platform_fee,
+        "available": available,
+        "is_traveld_trip": trip.get("is_public", False),
+        "is_honeymoon": trip.get("trip_type") == "honeymoon",
+        "payout_recipient_id": trip.get("host_id"),
+        "withdrawals": withdrawals,
+    }
+
+
+class PoolWithdrawReq(BaseModel):
+    amount: float
+    method: str = "bank_transfer"
+    note: Optional[str] = None
+
+
+@api.post("/trips/{trip_id}/pool/withdraw")
+async def withdraw_from_pool(trip_id: str, body: PoolWithdrawReq, user: dict = Depends(get_current_user)):
+    trip = await _require_host_or_admin(trip_id, user)
+    txns = await db.payment_transactions.find(
+        {"trip_id": trip_id, "payment_status": "paid"}, {"_id": 0}
+    ).to_list(1000)
+    expenses = await db.trip_expenses.find({"trip_id": trip_id}, {"_id": 0}).to_list(1000)
+    gross = sum(t.get("amount") or 0.0 for t in txns)
+    spent = sum(float(e.get("amount") or 0.0) for e in expenses)
+    platform_fee = round(gross * 0.05, 2)
+    available = round(gross - spent - platform_fee, 2)
+    if body.amount > available + 0.01:
+        raise HTTPException(status_code=400, detail=f"Requested ${body.amount:.2f} exceeds available ${available:.2f}")
+    withdrawal = {
+        "id": str(uuid.uuid4()),
+        "trip_id": trip_id,
+        "user_id": user["id"],
+        "amount": round(body.amount, 2),
+        "method": body.method,
+        "note": (body.note or "").strip() or None,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.pool_withdrawals.insert_one(withdrawal)
+    withdrawal.pop("_id", None)
+    await db.admin_requests.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "pool_withdrawal",
+        "from_user_id": user["id"],
+        "from_name": user.get("name"),
+        "from_email": user["email"],
+        "trip_id": trip_id,
+        "trip_name": trip.get("name"),
+        "amount": round(body.amount, 2),
+        "method": body.method,
+        "notes": withdrawal["note"],
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return withdrawal
+
+
 @api.get("/payments/packages")
 async def list_packages():
     return [{"id": pid, "amount": amt} for pid, amt in CONTRIBUTION_PACKAGES.items()]
@@ -1071,7 +1146,13 @@ async def list_packages():
 async def create_checkout(body: CheckoutReq, user: dict = Depends(get_current_user)):
     if body.package_id not in CONTRIBUTION_PACKAGES:
         raise HTTPException(status_code=400, detail="Invalid package")
-    await _trip_for_user(body.trip_id, user["id"])
+    # Allow host to contribute to their own trip
+    trip = await db.trips.find_one({"id": body.trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    member_ids = [m["user_id"] for m in trip.get("members", [])]
+    if user["id"] not in member_ids and trip.get("host_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not a member of this trip")
 
     amount = float(CONTRIBUTION_PACKAGES[body.package_id])
     origin = body.origin_url.rstrip("/")
